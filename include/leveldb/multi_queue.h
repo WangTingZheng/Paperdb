@@ -33,6 +33,7 @@ class LEVELDB_EXPORT MultiQueue {
   // Queue handle to an entry stored in the cache.
   struct Handle {};
 
+  // used by Table::Open
   // insert a handle contains filter into multi-queue
   // deleter will be called when handle is freed
   // filter will be loading in other thread
@@ -40,23 +41,30 @@ class LEVELDB_EXPORT MultiQueue {
                          void (*deleter)(const Slice& key,
                                          FilterBlockReader* value)) = 0;
 
-  virtual void UpdateHandle(Handle* handle, const Slice& key) = 0;
-
+  // Used by Table::Open
   // found a handle save in multi queue
   // key : [filter.filter name][table file id]
   virtual Handle* Lookup(const Slice& key) = 0;
 
-  // get filterblock reader from handle
-  virtual FilterBlockReader* Value(Handle* handle) = 0;
+  // Used by Table::Open
+  // re init filter which be released
+  virtual void GoBackToInitFilter(Handle* handle, RandomAccessFile* file) = 0;
 
-  // free handle and filterblock reader saved in multi queue
-  virtual void Erase(const Slice& key) = 0;
+  // Used by Table::KeyMayMatch
+  // Try to adjust
+  virtual void UpdateHandle(Handle* handle, const Slice& key) = 0;
 
+  // Used by Table::~Table
   // evict all filter when table is freed
   virtual void Release(Handle* handle) = 0;
 
-  // re init filter which be released
-  virtual void GoBackToInitFilter(Handle* handle, RandomAccessFile* file) = 0;
+  // Used by RemoveObsoleteFiles after compaction
+  // free handle and filterblock reader saved in multi queue
+  virtual void Erase(const Slice& key) = 0;
+
+  // get filterblock reader from handle
+  // not need lock
+  virtual FilterBlockReader* Value(Handle* handle) = 0;
 
   // Return an estimate of the combined charges of all elements stored in the
   // cache.
@@ -65,6 +73,10 @@ class LEVELDB_EXPORT MultiQueue {
   // set a logger to record adjustment information
   // in db/LOG
   virtual void SetLogger(Logger* logger) = 0;
+
+  virtual void Lock() = 0;
+
+  virtual void UnLock() = 0;
 };
 
 }  // namespace leveldb

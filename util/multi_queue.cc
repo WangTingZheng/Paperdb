@@ -178,7 +178,6 @@ class InternalMultiQueue : public MultiQueue {
 
   Handle* Insert(const Slice& key, FilterBlockReader* reader,
                  void (*deleter)(const Slice&, FilterBlockReader*)) override {
-    MutexLock l(&mutex_);
     if(reader == nullptr) return nullptr;
     // insert to queue
     size_t number = reader->LoadFilterNumber();
@@ -195,7 +194,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void UpdateHandle(Handle* handle, const Slice& key) override{
-    MutexLock l(&mutex_);
     QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
     SingleQueue* single_queue = FindQueue(queue_handle);
     if(single_queue){
@@ -212,7 +210,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   Handle* Lookup(const Slice& key) override {
-    MutexLock l(&mutex_);
     auto iter = map_.find(key.ToString());
     if (iter != map_.end()) {
       QueueHandle* handle = iter->second;
@@ -223,7 +220,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void GoBackToInitFilter(Handle* handle, RandomAccessFile* file) override {
-    MutexLock l(&mutex_);
     if(handle != nullptr){
       QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
       FilterBlockReader* reader = queue_handle->reader;
@@ -247,7 +243,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void Release(Handle* handle) override {
-    MutexLock l(&mutex_);
     if (handle != nullptr) {
       QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
       Status s;
@@ -260,7 +255,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void Erase(const Slice& key) override {
-    MutexLock l(&mutex_);
     auto iter = map_.find(key.ToString());
     if (iter != map_.end()) {
       QueueHandle* queue_handle = iter->second;
@@ -274,14 +268,20 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   size_t TotalCharge() const override {
-    MutexLock l(&mutex_);
     return usage_;
   }
 
   // logger for record adjustment information
   void SetLogger(Logger* logger) override {
-    MutexLock l(&mutex_);
     logger_ = logger;
+  }
+
+  void Lock() override{
+    mutex_.Lock();
+  }
+
+  void UnLock() override{
+    mutex_.Unlock();
   }
 
  private:

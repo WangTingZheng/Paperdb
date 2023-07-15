@@ -297,8 +297,9 @@ bool Table::MultiQueueKeyMayMatch(uint64_t block_offset, const Slice& key) {
   if(multi_queue && rep_->handle) {
     // update access time first
     FilterBlockReader* reader = multi_queue->Value(rep_->handle);
+    bool is_exist = reader->KeyMayMatch(block_offset, key);
     multi_queue->UpdateHandle(rep_->handle, key);
-    return reader->KeyMayMatch(block_offset, key);
+    return is_exist;
   }
   return true;
 }
