@@ -151,10 +151,6 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
       manual_compaction_(nullptr),
       versions_(new VersionSet(dbname_, &options_, table_cache_,
                                &internal_comparator_)) {
-  mutex_.Lock();
-  options_.schedule->SetSignal(&destructor_wait_,
-                                       &mq_schedule_mutex_, &mq_schedule_cv_);
-  mutex_.Unlock();
 }
 
 DBImpl::~DBImpl() {
@@ -181,15 +177,6 @@ DBImpl::~DBImpl() {
   if (owns_cache_) {
     delete options_.block_cache;
   }
-
-  // waiting for background thread finished
-  // waiting some filter can not be used
-  // todo: use shutting_down flag to end loading
-  mq_schedule_mutex_.Lock();
-  while (destructor_wait_){
-    mq_schedule_cv_.Wait();
-  }
-  mq_schedule_mutex_.Unlock();
 
   delete options_.multi_queue;
 

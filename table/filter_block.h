@@ -81,70 +81,55 @@ class FilterBlockReader {
   size_t LoadFilterNumber() const { return init_units_number_; }
 
   size_t FilterUnitsNumber()  {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal();
   }
 
   size_t FilterUnitsNumberInternal() {
-    mutex_.AssertHeld();
-    WaitForLoading();
     return filter_units.size();
   }
 
   uint64_t AccessTime() const {
-    MutexLock l(&mutex_);
-    return access_time_;
+    return access_time_.load(std::memory_order_acquire);
   }
 
   bool IsCold(SequenceNumber now_sequence) {
-    MutexLock l(&mutex_);
-    return now_sequence >= (sequence_ + life_time);
+    return now_sequence >= (sequence_.load(std::memory_order_acquire) + life_time);
   }
 
   size_t OneUnitSize() const { return disk_size_; }
 
   bool CanBeLoaded() {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal() < filters_number;
   }
 
   bool CanBeEvict() {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal() > 0;
   }
 
   // filter block memory overhead(Byte), use by Cache->Insert
   size_t Size() {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal() * disk_size_;
   }
 
   // R: (r)^n
   // IO: R*F
   double IOs() {
-    MutexLock l(&mutex_);
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal()));
-    return fpr * static_cast<double>(access_time_);
+    return fpr * static_cast<double>(access_time_.load(std::memory_order_acquire));
   }
 
   double LoadIOs() {
-    MutexLock l(&mutex_);
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal() + 1));
-    return fpr * static_cast<double>(access_time_);
+    return fpr * static_cast<double>(access_time_.load(std::memory_order_acquire));
   }
 
   double EvictIOs() {
-    MutexLock l(&mutex_);
     assert(!filter_units.empty());
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal() - 1));
-    return fpr * static_cast<double>(access_time_);
-  }
-
-  bool IsLoaded() const{
-    return init_done.load(std::memory_order_acquire);
+    return fpr * static_cast<double>(access_time_.load(std::memory_order_acquire));
   }
 
  private:
@@ -160,33 +145,19 @@ class FilterBlockReader {
   size_t base_lg_;  // Encoding parameter (see kFilterBaseLg in .cc file)
   size_t num_;      // Number of entries in offset array
 
-  mutable port::Mutex mutex_;
-  uint64_t access_time_ GUARDED_BY(mutex_);
-  SequenceNumber sequence_ GUARDED_BY(mutex_);
+  std::atomic<uint64_t> access_time_;
+  std::atomic<SequenceNumber> sequence_;
 
-  RandomAccessFile* file_ GUARDED_BY(mutex_);
+  RandomAccessFile* file_;
 
-  std::vector<const char*> filter_units GUARDED_BY(mutex_);
-  bool heap_allocated_ GUARDED_BY(mutex_);
+  std::vector<const char*> filter_units;
+  bool heap_allocated_;
 
   void UpdateState(const Slice& key);
   Status LoadFilterInternal();
   Status EvictFilterInternal();
 
   void UpdateFile(RandomAccessFile* file);
-
-  std::atomic<bool> init_done;
-  port::CondVar init_signal GUARDED_BY(mutex_);
-
-  // main thread maybe read unloaded filterblockreader
-  // when background thread does not finish
-  // waiting for background thread signal
-  void WaitForLoading(){
-    mutex_.AssertHeld();
-    while (!init_done){
-      init_signal.Wait();
-    }
-  }
 };
 
 }  // namespace leveldb

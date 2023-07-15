@@ -197,10 +197,8 @@ void Table::ReadMeta() {
   if (reader == nullptr) { //not in multi queue, insert
     reader = ReadFilter();
     if (reader != nullptr) {
+      reader->InitLoadFilter();
       handle = multi_queue->Insert(key, reader, &DeleteCacheFilter);
-      // todo: use background thread
-      // fix mq_schedule, take part of load and use
-      rep_->options.schedule->Schedule(LoadFilterBGWork, reader);
     }
   } else{ // in multi queue, load filter
     // check filter unit number

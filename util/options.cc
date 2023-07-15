@@ -6,11 +6,9 @@
 
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
-#include "util/mq_schedule.h"
 
 namespace leveldb {
 
-Options::Options() : comparator(BytewiseComparator()), env(Env::Default()),
-                     schedule(MQScheduler::Default()) {}
+Options::Options() : comparator(BytewiseComparator()), env(Env::Default()) {}
 
 }  // namespace leveldb
