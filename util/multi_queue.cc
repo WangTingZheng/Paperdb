@@ -293,8 +293,7 @@ class InternalMultiQueue : public MultiQueue {
   std::vector<SingleQueue*> queues_;
   std::unordered_map<std::string, QueueHandle*> map_;
 
-  std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn)
-      EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+  std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn){
     SingleQueue* queue = nullptr;
     std::vector<QueueHandle*> filters;
     for (int i = filters_number; i >= 1 && memory > 0; i--) {
