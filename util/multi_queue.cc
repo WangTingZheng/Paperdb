@@ -273,11 +273,11 @@ class InternalMultiQueue : public MultiQueue {
     logger_ = logger;
   }
 
-  void Lock() override{
+  void Lock() NO_THREAD_SAFETY_ANALYSIS override{
     mutex_.Lock();
   }
 
-  void UnLock() override{
+  void UnLock() NO_THREAD_SAFETY_ANALYSIS override{
     mutex_.Unlock();
   }
 
