@@ -23,6 +23,7 @@
 #include "table/format.h"
 #include "util/hash.h"
 #include "util/mutexlock.h"
+#include <atomic>
 
 namespace leveldb {
 
@@ -142,6 +143,10 @@ class FilterBlockReader {
     return fpr * static_cast<double>(access_time_);
   }
 
+  bool IsLoaded() const{
+    return init_done.load(std::memory_order_acquire);
+  }
+
  private:
   const FilterPolicy* policy_;
   const char* data_;  // Pointer to filter meta data (at block-start)
@@ -170,7 +175,7 @@ class FilterBlockReader {
 
   void UpdateFile(RandomAccessFile* file);
 
-  bool init_done GUARDED_BY(mutex_);
+  std::atomic<bool> init_done;
   port::CondVar init_signal GUARDED_BY(mutex_);
 
   // main thread maybe read unloaded filterblockreader

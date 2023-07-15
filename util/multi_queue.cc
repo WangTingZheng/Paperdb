@@ -102,6 +102,13 @@ class SingleQueue {
       if (e == nullptr || e == mru_ || e == lru_) {
         break;
       }
+
+      // skip unloaded reader
+      // reduce KeyMayMatch mutex overhead
+      if(!e->reader->IsLoaded()){
+        break ;
+      }
+
       if (e->reader->IsCold(sn) && e->reader->CanBeEvict()) {
         memory -= e->reader->OneUnitSize();
         filters.emplace_back(e);
