@@ -22,11 +22,6 @@
 * **util/multi_queue.cc**: Manage filter units in memory to reduce adjust overhead **(98% lines unit test coverage)**
 * **util/condvar_signal.h** : A wrapper for signal all threads waiting for using filterblock reader by condvar using RAII, similar to unique_ptr
 
-# Perf
-Before optimized, lock and unlock mutex to update handle and apply adjustment in multiqueue, will be heavies in Get path, we can create a background thread to reduce the overhead.
-
-![perf](https://raw.githack.com/WangTingZheng/Paperdb/elasticbf-dev/doc/perf-before.svg)
-
 # Performance
 
 Todo
