@@ -242,17 +242,15 @@ class InternalMultiQueue : public MultiQueue {
   void Release(Handle* handle) override {
     if (handle != nullptr) {
       QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
-      Status s;
       while(queue_handle->reader->CanBeEvict()) {
-        s = EvictHandle(queue_handle);
-        assert(s.ok());
+        EvictHandle(queue_handle);
         usage_ -= queue_handle->reader->OneUnitSize();
       }
     }
   }
 
-  void Erase(const Slice& key) override {
-    auto iter = map_.find(key.ToString());
+  void Erase(const std::string& key) override {
+    auto iter = map_.find(key);
     if (iter != map_.end()) {
       QueueHandle* queue_handle = iter->second;
       SingleQueue* queue = FindQueue(queue_handle);
@@ -260,7 +258,7 @@ class InternalMultiQueue : public MultiQueue {
         usage_ -= queue_handle->reader->Size();
         queue->Erase(queue_handle);
       }
-      map_.erase(key.ToString());
+      map_.erase(key);
     }
   }
 

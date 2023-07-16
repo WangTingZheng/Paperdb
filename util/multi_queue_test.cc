@@ -68,7 +68,7 @@ class MultiQueueTest : public testing::Test {
 
   void Release(MultiQueue::Handle* handle) const { multi_queue_->Release(handle); }
 
-  void Erase(const Slice& key) const { multi_queue_->Erase(key); }
+  void Erase(const std::string & key) const { multi_queue_->Erase(key); }
 
   FilterBlockReader* Value(MultiQueue::Handle* handle) const {
     return multi_queue_->Value(handle);

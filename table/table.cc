@@ -203,7 +203,8 @@ void Table::ReadMeta() {
   } else{ // in multi queue, load filter
     // check filter unit number
     // prev file object will be free, update new file object
-    multi_queue->GoBackToInitFilter(rep_->handle, rep_->file);
+    // todo add unit test
+    multi_queue->GoBackToInitFilter(handle, rep_->file);
   }
 
   rep_->handle = handle;
@@ -295,9 +296,11 @@ bool Table::MultiQueueKeyMayMatch(uint64_t block_offset, const Slice& key) {
   if(multi_queue && rep_->handle) {
     // update access time first
     FilterBlockReader* reader = multi_queue->Value(rep_->handle);
-    bool is_exist = reader->KeyMayMatch(block_offset, key);
-    multi_queue->UpdateHandle(rep_->handle, key);
-    return is_exist;
+    if(reader) {
+      bool is_exist = reader->KeyMayMatch(block_offset, key);
+      multi_queue->UpdateHandle(rep_->handle, key);
+      return is_exist;
+    }
   }
   return true;
 }

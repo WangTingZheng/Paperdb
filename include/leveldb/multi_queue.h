@@ -60,7 +60,7 @@ class LEVELDB_EXPORT MultiQueue {
 
   // Used by RemoveObsoleteFiles after compaction
   // free handle and filterblock reader saved in multi queue
-  virtual void Erase(const Slice& key) = 0;
+  virtual void Erase(const std::string & key) = 0;
 
   // get filterblock reader from handle
   // not need lock
