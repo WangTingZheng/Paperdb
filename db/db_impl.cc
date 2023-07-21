@@ -112,7 +112,9 @@ Options SanitizeOptions(const std::string& dbname,
 
   if(result.bloom_filter_adjustment && result.filter_policy){
     result.multi_queue = NewMultiQueue();
+    result.multi_queue->Lock();
     result.multi_queue->SetLogger(result.info_log);
+    result.multi_queue->UnLock();
   }
   return result;
 }
@@ -279,11 +281,18 @@ void DBImpl::RemoveObsoleteFiles() {
       if (!keep) {
         files_to_delete.push_back(std::move(filename));
         if (type == kTableFile) {
+          MultiQueue *multi_queue = options_.multi_queue;
+          if(multi_queue){
+            multi_queue->Lock();
+          }
           table_cache_->Evict(number);
           // Delete filter block read in multi queue
           if(options_.multi_queue){
             std::string key = Table::ParseHandleKey(options_, number);
             options_.multi_queue->Erase(key);
+          }
+          if(multi_queue){
+            multi_queue->UnLock();
           }
         }
         Log(options_.info_log, "Delete type=%d #%lld\n", static_cast<int>(type),
@@ -1157,7 +1166,16 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
     } else if (imm != nullptr && imm->Get(lkey, value, &s)) {
       // Done
     } else {
+      // lock to protect mq
+      // add a single lock to reduce mutex overhead
+      MultiQueue* multi_queue = options_.multi_queue;
+      if(multi_queue){
+        multi_queue->Lock();
+      }
       s = current->Get(options, lkey, value, &stats);
+      if(multi_queue){
+        multi_queue->UnLock();
+      }
       have_stat_update = true;
     }
     mutex_.Lock();
@@ -1463,9 +1481,12 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
     if (imm_) {
       total_usage += imm_->ApproximateMemoryUsage();
     }
+    MultiQueue *multi_queue = options_.multi_queue;
     // easier to track multi_queue's memory overhead
-    if(options_.multi_queue){
+    if(multi_queue){
+      multi_queue->Lock();
       total_usage += options_.multi_queue->TotalCharge();
+      multi_queue->UnLock();
     }
 
     char buf[50];

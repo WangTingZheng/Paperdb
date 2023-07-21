@@ -102,6 +102,7 @@ class SingleQueue {
       if (e == nullptr || e == mru_ || e == lru_) {
         break;
       }
+
       if (e->reader->IsCold(sn) && e->reader->CanBeEvict()) {
         memory -= e->reader->OneUnitSize();
         filters.emplace_back(e);
@@ -177,7 +178,6 @@ class InternalMultiQueue : public MultiQueue {
 
   Handle* Insert(const Slice& key, FilterBlockReader* reader,
                  void (*deleter)(const Slice&, FilterBlockReader*)) override {
-    MutexLock l(&mutex_);
     if(reader == nullptr) return nullptr;
     // insert to queue
     size_t number = reader->LoadFilterNumber();
@@ -219,7 +219,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   Handle* Lookup(const Slice& key) override {
-    MutexLock l(&mutex_);
     auto iter = map_.find(key.ToString());
     if (iter != map_.end()) {
       QueueHandle* handle = iter->second;
@@ -230,7 +229,6 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void GoBackToInitFilter(Handle* handle, RandomAccessFile* file) override {
-    MutexLock l(&mutex_);
     if(handle != nullptr){
       QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
       FilterBlockReader* reader = queue_handle->reader;
@@ -254,21 +252,17 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void Release(Handle* handle) override {
-    MutexLock l(&mutex_);
     if (handle != nullptr) {
       QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
-      Status s;
       while(queue_handle->reader->CanBeEvict()) {
-        s = EvictHandle(queue_handle);
-        assert(s.ok());
+        EvictHandle(queue_handle);
         usage_ -= queue_handle->reader->OneUnitSize();
       }
     }
   }
 
-  void Erase(const Slice& key) override {
-    MutexLock l(&mutex_);
-    auto iter = map_.find(key.ToString());
+  void Erase(const std::string& key) override {
+    auto iter = map_.find(key);
     if (iter != map_.end()) {
       QueueHandle* queue_handle = iter->second;
       SingleQueue* queue = FindQueue(queue_handle);
@@ -276,37 +270,44 @@ class InternalMultiQueue : public MultiQueue {
         usage_ -= queue_handle->reader->Size();
         queue->Erase(queue_handle);
       }
-      map_.erase(key.ToString());
+      map_.erase(key);
     }
   }
 
   size_t TotalCharge() const override {
-    MutexLock l(&mutex_);
     return usage_;
   }
 
   // logger for record adjustment information
   void SetLogger(Logger* logger) override {
-    MutexLock l(&mutex_);
     logger_ = logger;
   }
 
+  void Lock() NO_THREAD_SAFETY_ANALYSIS override{
+    mutex_.Lock();
+  }
+
+  void UnLock() NO_THREAD_SAFETY_ANALYSIS override{
+    mutex_.Unlock();
+  }
+
  private:
-  size_t usage_ GUARDED_BY(mutex_);
-  Logger* logger_ GUARDED_BY(mutex_);
+  size_t usage_;
+  Logger* logger_;
   // 2^32-1 at least (42,9496,7295)
   // 2^64-1 at most  (1844,6744,0737,0955,1615)
   std::atomic<size_t> adjustment_time_;
 
   mutable port::Mutex mutex_;
 
-  std::vector<SingleQueue*> queues_ GUARDED_BY(mutex_);
-  std::unordered_map<std::string, QueueHandle*> map_ GUARDED_BY(mutex_);
+  std::vector<SingleQueue*> queues_;
+  std::unordered_map<std::string, QueueHandle*> map_;
 
   MQScheduler* scheduler GUARDED_BY(mutex_);
 
   std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+
     SingleQueue* queue = nullptr;
     std::vector<QueueHandle*> filters;
     for (int i = filters_number; i >= 1 && memory > 0; i--) {
@@ -320,7 +321,7 @@ class InternalMultiQueue : public MultiQueue {
     return filters;
   }
 
-  SingleQueue* FindQueue(QueueHandle* handle) EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
+  SingleQueue* FindQueue(QueueHandle* handle) {
     FilterBlockReader* reader = Value(reinterpret_cast<Handle*>(handle));
     if (reader != nullptr) {
       size_t number = reader->FilterUnitsNumber();
@@ -330,8 +331,7 @@ class InternalMultiQueue : public MultiQueue {
     return nullptr;
   }
 
-  bool CanBeAdjusted(const std::vector<QueueHandle*>& colds, QueueHandle* hot)
-      EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+  bool CanBeAdjusted(const std::vector<QueueHandle*>& colds, QueueHandle* hot){
     double original_ios = 0;
     for (QueueHandle* handle : colds) {
       if (handle && !handle->reader->CanBeEvict()) return false;
@@ -371,7 +371,7 @@ class InternalMultiQueue : public MultiQueue {
         adjustment_time_.load(std::memory_order_acquire));
   }
 
-  Status LoadHandle(QueueHandle* handle) EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+  Status LoadHandle(QueueHandle* handle){
     size_t number = handle->reader->FilterUnitsNumber();
     if(number < filters_number) {
       queues_[number]->Remove(handle);
@@ -381,7 +381,7 @@ class InternalMultiQueue : public MultiQueue {
     return Status::Corruption("There is a full reader!");
   }
 
-  Status EvictHandle(QueueHandle* handle) EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+  Status EvictHandle(QueueHandle* handle){
     size_t number = handle->reader->FilterUnitsNumber();
     if(number >= 1) {
       queues_[number]->Remove(handle);
@@ -392,7 +392,7 @@ class InternalMultiQueue : public MultiQueue {
   }
 
   void ApplyAdjustment(const std::vector<QueueHandle*>& colds,
-                      QueueHandle* hot) EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+                      QueueHandle* hot){
     Status s;
     for (QueueHandle* cold : colds) {
       s = EvictHandle(cold);
@@ -400,6 +400,7 @@ class InternalMultiQueue : public MultiQueue {
 #ifdef USE_ADJUSTMENT_LOGGING
         Log(logger_, "Adjustment: Evict colds handles failed, message is %s",
             s.ToString().c_str());
+        adjustment_time_.fetch_sub(1);
 #endif
         adjustment_time_.fetch_sub(1);
         return ;
@@ -411,13 +412,13 @@ class InternalMultiQueue : public MultiQueue {
 #ifdef USE_ADJUSTMENT_LOGGING
       Log(logger_, "Adjustment: Load hot handle failed, message is %s",
           s.ToString().c_str());
+      adjustment_time_.fetch_sub(1);
 #endif
       adjustment_time_.fetch_sub(1);
     }
   }
 
-  void Adjustment(QueueHandle* hot_handle, SequenceNumber sn)
-      EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+  void Adjustment(QueueHandle* hot_handle, SequenceNumber sn){
     if (hot_handle && hot_handle->reader->CanBeLoaded()) {
       size_t memory = hot_handle->reader->OneUnitSize();
       std::vector<QueueHandle*> cold = FindColdFilter(memory, sn);

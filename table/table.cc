@@ -190,6 +190,7 @@ void Table::ReadMeta() {
   if (handle == nullptr) { //not in multi queue, insert
     FilterBlockReader* reader = ReadFilter();
     if (reader != nullptr) {
+      reader->InitLoadFilter();
       handle = multi_queue->Insert(key, reader, &DeleteCacheFilter);
     }
   } else{ // in multi queue, load filter

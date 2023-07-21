@@ -7,15 +7,17 @@
 
 #include "port/port.h"
 #include "port/thread_annotations.h"
+#include <atomic>
 
 namespace leveldb {
 class SCOPED_LOCKABLE CondVarSignal {
  public:
-  explicit CondVarSignal(port::Mutex* mu, bool *done,
+  explicit CondVarSignal(port::Mutex* mu, std::atomic<bool> *done,
                          port::CondVar* condVar) EXCLUSIVE_LOCK_FUNCTION(mu)
       :mu_(mu), done_(done), condVar_(condVar){
     // lock first to protect done_ and cv in multi thread
     this->mu_->Lock();
+    this->done_->store(false, std::memory_order_release);
     *this->done_ = false;
   }
 
@@ -23,7 +25,7 @@ class SCOPED_LOCKABLE CondVarSignal {
   CondVarSignal& operator=(const CondVarSignal&) = delete;
 
   ~CondVarSignal()UNLOCK_FUNCTION(){
-    *this->done_ = true;
+    this->done_->store(true, std::memory_order_release);
     this->condVar_->SignalAll();
     // unlock last to protect done_ and cv in multi thread
     this->mu_->Unlock();
@@ -32,7 +34,7 @@ class SCOPED_LOCKABLE CondVarSignal {
  private:
   port::Mutex* const mu_;
   port::CondVar* const condVar_;
-  bool *const done_;
+  std::atomic<bool> *const done_;
 };
 }
 #endif  // LEVELDB_CONDVAR_SIGNAL_H
