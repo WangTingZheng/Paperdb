@@ -38,7 +38,7 @@ Todo
 
 # Next Paper
 
-Next paper to implement maybe [AC-Key][5] or [HotRing][6] or [WiscKey][7], see [some ideas about implementing Wisckey](https://github.com/WangTingZheng/Paperdb/discussions/12). For Hotring, there is a [hashtable](https://github.com/facebook/rocksdb/tree/main/utilities/persistent_cache) in RocksDB with unit test and benchmark, we can modified it to implement Hotring.
+Next paper to implement maybe [AC-Key][5] or [HotRing][6] or [WiscKey][7], see [some ideas about implementing Wisckey](https://github.com/WangTingZheng/Paperdb/discussions/12). For Hotring, there is a [hashtable](https://github.com/facebook/rocksdb/tree/main/utilities/persistent_cache) in RocksDB with unit test and benchmark, we can modified it to implement Hotring. One more thing, The Skiplist maybe replaced by [ART(adaptive radix tree)][9].
 
 
 ---
@@ -213,3 +213,5 @@ I created two pr to LevelDB during implementing ElasticBF:
 [7]: https://dl.acm.org/doi/10.1145/3033273 "Lu L, Pillai T S, Gopalakrishnan H, et al. Wisckey: Separating keys from values in ssd-conscious storage[J]. ACM Transactions on Storage (TOS), 2017, 13(1): 1-28."
 
 [8]: https://zhuanlan.zhihu.com/p/639996512 "Ash1n2. 差分火焰图，让你的代码优化验证事半功倍. Zhihu. 2023."
+
+[9]: https://ieeexplore.ieee.org/abstract/document/6544812/. "Leis V, Kemper A, Neumann T. The adaptive radix tree: ARTful indexing for main-memory databases[C]//2013 IEEE 29th International Conference on Data Engineering (ICDE). IEEE, 2013: 38-49."
