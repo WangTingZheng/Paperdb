@@ -154,6 +154,9 @@ class InternalMultiQueue : public MultiQueue {
 
   ~InternalMultiQueue() override {
     // save adjustment times when db is over by force
+    shutting_down_mutex_.Lock();
+    scheduler->ShutDown();
+    shutting_down_mutex_.Unlock();
     MutexLock l(&mutex_);
     Log(logger_, "Adjustment: Apply %zu times until now",
         adjustment_time_.load(std::memory_order_acquire));
@@ -165,22 +168,20 @@ class InternalMultiQueue : public MultiQueue {
     }
     assert(real_usage == usage_);
 #endif
+    // todo waiting for background thread done
     for (int i = 0; i < filters_number + 1; i++) {
       delete queues_[i];
       queues_[i] = nullptr;
     }
   }
 
-  static void LoadFilterBGWork(void* arg){
-    FilterBlockReader* job = reinterpret_cast<FilterBlockReader*>(arg);
-    job->InitLoadFilter();
-  }
-
   Handle* Insert(const Slice& key, FilterBlockReader* reader,
                  void (*deleter)(const Slice&, FilterBlockReader*)) override {
     if(reader == nullptr) return nullptr;
     // insert to queue
-    size_t number = reader->LoadFilterNumber();
+
+    reader->InitLoadFilter();
+    size_t number = reader->FilterUnitsNumber();
     SingleQueue* queue = queues_[number];
     QueueHandle* handle = queue->Insert(key, reader, deleter);
 
@@ -188,31 +189,39 @@ class InternalMultiQueue : public MultiQueue {
     map_.emplace(key.ToString(), handle);
 
     // update usage
-    usage_ += reader->LoadFilterNumber() * reader->OneUnitSize();
-
-    scheduler->Schedule(LoadFilterBGWork, reader);
+    usage_ += reader->Size();
 
     return reinterpret_cast<Handle*>(handle);
   }
 
-  bool UpdateHandle(Handle* handle, uint64_t block_offset, const Slice& key) override{
+  void DoAdjustment(Handle* handle, SequenceNumber sn) override{
     MutexLock l(&mutex_);
     QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
     SingleQueue* single_queue = FindQueue(queue_handle);
     if(single_queue){
       // change to hot handle
       single_queue->MoveToMRU(queue_handle);
+      Adjustment(queue_handle, sn);
+    }
+  }
 
-      // try to apply adjustment
-      ParsedInternalKey parsedInternalKey;
-      if (ParseInternalKey(key, &parsedInternalKey)) {
-        SequenceNumber sn = parsedInternalKey.sequence;
-        FilterBlockReader* reader = Value(handle);
-        if(reader) {
-          reader->UpdateState(sn);
-          Adjustment(queue_handle, sn);
-          return reader->KeyMayMatch(block_offset, key);
-        }
+  static void AdjustmentBGWork(void* arg, Handle* handle, SequenceNumber sn){
+    MultiQueue* multi_queue = static_cast<MultiQueue*>(arg);
+    if(multi_queue != nullptr){
+      multi_queue->DoAdjustment(handle, sn);
+    }
+  }
+
+  bool UpdateHandle(Handle* handle, uint64_t block_offset, const Slice& key) override{
+    // try to apply adjustment
+    ParsedInternalKey parsedInternalKey;
+    if (ParseInternalKey(key, &parsedInternalKey)) {
+      SequenceNumber sn = parsedInternalKey.sequence;
+      FilterBlockReader* reader = Value(handle);
+      if (reader) {
+        reader->UpdateState(sn);
+        scheduler->Schedule(AdjustmentBGWork, this, handle, sn);
+        return reader->KeyMayMatch(block_offset, key);
       }
     }
     return true;
@@ -299,11 +308,12 @@ class InternalMultiQueue : public MultiQueue {
   std::atomic<size_t> adjustment_time_;
 
   mutable port::Mutex mutex_;
+  mutable port::Mutex shutting_down_mutex_;
 
   std::vector<SingleQueue*> queues_;
   std::unordered_map<std::string, QueueHandle*> map_;
 
-  MQScheduler* scheduler GUARDED_BY(mutex_);
+  MQScheduler* scheduler;
 
   std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){

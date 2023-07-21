@@ -8,32 +8,47 @@
 #include <atomic>
 #include <queue>
 
+#include "leveldb/multi_queue.h"
+
 #include "port/port.h"
-#include <atomic>
+
 #include "mutexlock.h"
 namespace leveldb {
 
 struct BackgroundWorkItem {
-  explicit BackgroundWorkItem(void (*function)(void* arg), void* arg)
-      : function(function), arg(arg) {}
+  explicit BackgroundWorkItem(void (*function)(void*, MultiQueue::Handle*,
+                                               SequenceNumber), void* arg,
+                              MultiQueue::Handle*handle, SequenceNumber sn)
+      : function(function), arg(arg),handle(handle), sn(sn) {}
 
-  void (*const function)(void*);
+  void (*const function)(void*, MultiQueue::Handle*, SequenceNumber);
   void* const arg;
+  MultiQueue::Handle* handle;
+  SequenceNumber sn;
 };
 
 class MQScheduler {
  public:
-  MQScheduler(): background_work_cv_(&background_work_mutex_),
-                 started_background_thread_(false){}
-  void Schedule(void (*background_work_function)(void* background_work_arg),
-    void* background_work_arg);
+  MQScheduler(): background_work_cv_(&background_work_mutex_), background_finished_cv_(&background_work_mutex_),
+                 started_background_thread_(false), shutting_down_(true){}
+  void Schedule(void (*background_work_function)(void*,MultiQueue::Handle*, SequenceNumber),
+             void* background_work_arg, MultiQueue::Handle*handle, SequenceNumber sn);
 
   static MQScheduler* Default();
+
+  void ShutDown(){
+    MutexLock l(&background_work_mutex_);
+    while (!shutting_down_){
+      background_finished_cv_.Wait();
+    }
+  }
 
  private:
   port::Mutex background_work_mutex_;
   port::CondVar background_work_cv_ GUARDED_BY(background_work_mutex_);
+  port::CondVar background_finished_cv_ GUARDED_BY(background_work_mutex_);
   bool started_background_thread_ GUARDED_BY(background_work_mutex_);
+  bool shutting_down_;
 
   std::queue<BackgroundWorkItem> background_work_queue_
       GUARDED_BY(background_work_mutex_);

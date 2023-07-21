@@ -294,6 +294,18 @@ class Stats {
 
   void AddMessage(Slice msg) { AppendWithSpace(&message_, msg); }
 
+  void StartRecordingIO(){
+    SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
+    env->count_random_reads_ = true;
+    env->random_read_counter_.Reset();
+  }
+
+  int FinishedRecordingIO(){
+    SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
+    int reads = env->random_read_counter_.Read();
+    return reads;
+  }
+
   void FinishedSingleOp() {
     if (FLAGS_histogram) {
       double now = g_env->NowMicros();
@@ -306,7 +318,7 @@ class Stats {
       last_op_finish_ = now;
     }
 
-      done_++;
+    done_++;
     if(FLAGS_print_process) {
       if (done_ >= next_report_) {
         if (next_report_ < 1000)
@@ -919,9 +931,7 @@ class Benchmark {
     int found = 0;
     KeyBuffer key;
     if(FLAGS_save_ios) {
-      SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
-      env->count_random_reads_ = true;
-      env->random_read_counter_.Reset();
+      thread->stats.StartRecordingIO();
     }
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(FLAGS_num);
@@ -933,8 +943,7 @@ class Benchmark {
     }
     char msg[100];
     if(FLAGS_save_ios) {
-      SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
-      int reads = env->random_read_counter_.Read();
+      int reads = thread->stats.FinishedRecordingIO();
       std::snprintf(msg, sizeof(msg), "(%d of %d found), cause %d io", found, num_, reads);
     }else {
       std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);

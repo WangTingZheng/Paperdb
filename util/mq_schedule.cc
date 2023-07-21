@@ -6,9 +6,10 @@
 //
 
 #include "mq_schedule.h"
+
+#include "db/dbformat.h"
 #include <atomic>
 #include <thread>
-
 
 namespace leveldb {
 
@@ -18,22 +19,28 @@ void MQScheduler::BackgroundThreadMain() {
 
     // Wait until there is work to be done.
     while (background_work_queue_.empty()) {
+      shutting_down_ = true;
+      background_finished_cv_.SignalAll();
       background_work_cv_.Wait();
     }
 
     assert(!background_work_queue_.empty());
     auto background_work_function = background_work_queue_.front().function;
     void* background_work_arg = background_work_queue_.front().arg;
+    MultiQueue::Handle* background_work_handle = background_work_queue_.front().handle;
+    SequenceNumber background_work_sn = background_work_queue_.front().sn;
     background_work_queue_.pop();
 
     background_work_mutex_.Unlock();
-    background_work_function(background_work_arg);
+    background_work_function(background_work_arg, background_work_handle, background_work_sn);
   }
 }
 
-void MQScheduler::Schedule(void (*background_work_function)(void*),
-                          void* background_work_arg) {
+void MQScheduler::Schedule(void (*background_work_function)(void*,
+                              MultiQueue::Handle*, SequenceNumber),
+                          void* background_work_arg, MultiQueue::Handle*handle, SequenceNumber sn) {
   background_work_mutex_.Lock();
+  shutting_down_ = false;
   // Start the background thread, if we haven't done so already.
   if (!started_background_thread_) {
     started_background_thread_ = true;
@@ -46,7 +53,7 @@ void MQScheduler::Schedule(void (*background_work_function)(void*),
     background_work_cv_.Signal();
   }
 
-  background_work_queue_.emplace(background_work_function, background_work_arg);
+  background_work_queue_.emplace(background_work_function, background_work_arg, handle, sn);
   background_work_mutex_.Unlock();
 }
 namespace {
