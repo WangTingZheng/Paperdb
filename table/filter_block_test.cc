@@ -3,11 +3,8 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include "table/filter_block.h"
-
 #include "leveldb/filter_policy.h"
-
 #include "util/file_impl.h"
-
 #include "gtest/gtest.h"
 
 namespace leveldb {
@@ -254,6 +251,7 @@ TEST_F(FilterBlockTest, Hotness) {
     AppendInternalKey(&check_result, check_key);
     // sequence number is sn
     ASSERT_TRUE(reader->KeyMayMatch(0, check_result));
+    reader->UpdateState(sn);
     ASSERT_EQ(reader->AccessTime(), sn);
 
     // reader died in sn + 30000
@@ -326,6 +324,7 @@ TEST_F(FilterBlockTest, IOs) {
   int access = 1000;
   for (int i = 0; i < access; i++) {
     ASSERT_TRUE(reader->KeyMayMatch(100, "foo"));
+    reader->UpdateState(0);
   }
 
   double false_positive_rate = pow(0.6185, 10);

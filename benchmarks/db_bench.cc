@@ -22,6 +22,7 @@
 #include "util/mutexlock.h"
 #include "util/random.h"
 #include "util/testutil.h"
+#include "util/file_impl.h"
 
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
@@ -55,6 +56,7 @@ static const char* FLAGS_benchmarks =
     "readrandom,"  // Extra run to allow previous compactions to quiesce
     "readseq,"
     "readreverse,"
+    "readwhilewriting,"
     "compact,"
     "readrandom,"
     "readseq,"
@@ -139,6 +141,8 @@ static int FLAGS_zstd_compression_level = 1;
 
 // If true, remove all bench related file after benchmarking
 static bool FLAGS_clean_bench_file = false;
+
+static bool FLAGS_save_ios = true;
 
 namespace leveldb {
 
@@ -914,6 +918,11 @@ class Benchmark {
     std::string value;
     int found = 0;
     KeyBuffer key;
+    if(FLAGS_save_ios) {
+      SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
+      env->count_random_reads_ = true;
+      env->random_read_counter_.Reset();
+    }
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
@@ -923,7 +932,14 @@ class Benchmark {
       thread->stats.FinishedSingleOp();
     }
     char msg[100];
-    std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
+    if(FLAGS_save_ios) {
+      SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
+      int reads = env->random_read_counter_.Read();
+      std::snprintf(msg, sizeof(msg), "(%d of %d found), cause %d io", found, num_, reads);
+    }else {
+      std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
+    }
+
     thread->stats.AddMessage(msg);
   }
 
@@ -1138,7 +1154,10 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--multi_queue_open=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_multi_queue_open = n;
-    } else if (sscanf(argv[i], "--bloom_bits=%d%c", &n, &junk) == 1) {
+    } else if (sscanf(argv[i], "--save_io=%d%c", &n, &junk) == 1 &&
+           (n == 0 || n == 1)) {
+      FLAGS_save_ios = n;
+    }else if (sscanf(argv[i], "--bloom_bits=%d%c", &n, &junk) == 1) {
       FLAGS_bloom_bits = n;
     } else if (sscanf(argv[i], "--open_files=%d%c", &n, &junk) == 1) {
       FLAGS_open_files = n;
@@ -1151,6 +1170,9 @@ int main(int argc, char** argv) {
   }
 
   leveldb::g_env = leveldb::Env::Default();
+  if(FLAGS_save_ios){
+    leveldb::g_env = new leveldb::SpecialEnv(leveldb::g_env);
+  }
 
   // Choose a location for the test database if none given with --db=<path>
   if (FLAGS_db == nullptr) {

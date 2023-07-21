@@ -18,6 +18,7 @@
 #include "leveldb/filter_policy.h"
 #include "leveldb/table.h"
 #include "util/testutil.h"
+#include "util/file_impl.h"
 
 namespace leveldb {
 
@@ -33,47 +34,6 @@ static std::string RandomKey(Random* rnd) {
                      : (rnd->OneIn(100) ? rnd->Skewed(10) : rnd->Uniform(10)));
   return test::RandomKey(rnd, len);
 }
-
-namespace {
-class AtomicCounter {
- public:
-  AtomicCounter() : count_(0) {}
-  void Increment() { IncrementBy(1); }
-  void IncrementBy(int count) LOCKS_EXCLUDED(mu_) {
-    MutexLock l(&mu_);
-    count_ += count;
-  }
-  int Read() LOCKS_EXCLUDED(mu_) {
-    MutexLock l(&mu_);
-    return count_;
-  }
-  void Reset() LOCKS_EXCLUDED(mu_) {
-    MutexLock l(&mu_);
-    count_ = 0;
-  }
-
- private:
-  port::Mutex mu_;
-  int count_ GUARDED_BY(mu_);
-};
-
-void DelayMilliseconds(int millis) {
-  Env::Default()->SleepForMicroseconds(millis * 1000);
-}
-
-bool IsLdbFile(const std::string& f) {
-  return strstr(f.c_str(), ".ldb") != nullptr;
-}
-
-bool IsLogFile(const std::string& f) {
-  return strstr(f.c_str(), ".log") != nullptr;
-}
-
-bool IsManifestFile(const std::string& f) {
-  return strstr(f.c_str(), "MANIFEST") != nullptr;
-}
-
-}  // namespace
 
 // Test Env to override default Env behavior for testing.
 class TestEnv : public EnvWrapper {
@@ -103,153 +63,6 @@ class TestEnv : public EnvWrapper {
 
  private:
   bool ignore_dot_files_;
-};
-
-// Special Env used to delay background operations.
-class SpecialEnv : public EnvWrapper {
- public:
-  // For historical reasons, the std::atomic<> fields below are currently
-  // accessed via acquired loads and release stores. We should switch
-  // to plain load(), store() calls that provide sequential consistency.
-
-  // sstable/log Sync() calls are blocked while this pointer is non-null.
-  std::atomic<bool> delay_data_sync_;
-
-  // sstable/log Sync() calls return an error.
-  std::atomic<bool> data_sync_error_;
-
-  // Simulate no-space errors while this pointer is non-null.
-  std::atomic<bool> no_space_;
-
-  // Simulate non-writable file system while this pointer is non-null.
-  std::atomic<bool> non_writable_;
-
-  // Force sync of manifest files to fail while this pointer is non-null.
-  std::atomic<bool> manifest_sync_error_;
-
-  // Force write to manifest files to fail while this pointer is non-null.
-  std::atomic<bool> manifest_write_error_;
-
-  // Force log file close to fail while this bool is true.
-  std::atomic<bool> log_file_close_;
-
-  bool count_random_reads_;
-  AtomicCounter random_read_counter_;
-
-  explicit SpecialEnv(Env* base)
-      : EnvWrapper(base),
-        delay_data_sync_(false),
-        data_sync_error_(false),
-        no_space_(false),
-        non_writable_(false),
-        manifest_sync_error_(false),
-        manifest_write_error_(false),
-        log_file_close_(false),
-        count_random_reads_(false) {}
-
-  Status NewWritableFile(const std::string& f, WritableFile** r) {
-    class DataFile : public WritableFile {
-     private:
-      SpecialEnv* const env_;
-      WritableFile* const base_;
-      const std::string fname_;
-
-     public:
-      DataFile(SpecialEnv* env, WritableFile* base, const std::string& fname)
-          : env_(env), base_(base), fname_(fname) {}
-
-      ~DataFile() { delete base_; }
-      Status Append(const Slice& data) {
-        if (env_->no_space_.load(std::memory_order_acquire)) {
-          // Drop writes on the floor
-          return Status::OK();
-        } else {
-          return base_->Append(data);
-        }
-      }
-      Status Close() {
-        Status s = base_->Close();
-        if (s.ok() && IsLogFile(fname_) &&
-            env_->log_file_close_.load(std::memory_order_acquire)) {
-          s = Status::IOError("simulated log file Close error");
-        }
-        return s;
-      }
-      Status Flush() { return base_->Flush(); }
-      Status Sync() {
-        if (env_->data_sync_error_.load(std::memory_order_acquire)) {
-          return Status::IOError("simulated data sync error");
-        }
-        while (env_->delay_data_sync_.load(std::memory_order_acquire)) {
-          DelayMilliseconds(100);
-        }
-        return base_->Sync();
-      }
-    };
-    class ManifestFile : public WritableFile {
-     private:
-      SpecialEnv* env_;
-      WritableFile* base_;
-
-     public:
-      ManifestFile(SpecialEnv* env, WritableFile* b) : env_(env), base_(b) {}
-      ~ManifestFile() { delete base_; }
-      Status Append(const Slice& data) {
-        if (env_->manifest_write_error_.load(std::memory_order_acquire)) {
-          return Status::IOError("simulated writer error");
-        } else {
-          return base_->Append(data);
-        }
-      }
-      Status Close() { return base_->Close(); }
-      Status Flush() { return base_->Flush(); }
-      Status Sync() {
-        if (env_->manifest_sync_error_.load(std::memory_order_acquire)) {
-          return Status::IOError("simulated sync error");
-        } else {
-          return base_->Sync();
-        }
-      }
-    };
-
-    if (non_writable_.load(std::memory_order_acquire)) {
-      return Status::IOError("simulated write error");
-    }
-
-    Status s = target()->NewWritableFile(f, r);
-    if (s.ok()) {
-      if (IsLdbFile(f) || IsLogFile(f)) {
-        *r = new DataFile(this, *r, f);
-      } else if (IsManifestFile(f)) {
-        *r = new ManifestFile(this, *r);
-      }
-    }
-    return s;
-  }
-
-  Status NewRandomAccessFile(const std::string& f, RandomAccessFile** r) {
-    class CountingFile : public RandomAccessFile {
-     private:
-      RandomAccessFile* target_;
-      AtomicCounter* counter_;
-
-     public:
-      CountingFile(RandomAccessFile* target, AtomicCounter* counter)
-          : target_(target), counter_(counter) {}
-      ~CountingFile() override { delete target_; }
-      Status Read(uint64_t offset, size_t n, Slice* result,
-                  char* scratch) const override {
-        counter_->Increment();
-        return target_->Read(offset, n, result, scratch);
-      }
-    };
-
-    Status s = target()->NewRandomAccessFile(f, r);
-    if (s.ok() && count_random_reads_) {
-      *r = new CountingFile(*r, &random_read_counter_);
-    }
-    return s;
-  }
 };
 
 class DBTest : public testing::Test {
@@ -1941,12 +1754,13 @@ TEST_F(DBTest, BloomFilter) {
 
     options.env = env_;
     options.block_cache = NewLRUCache(0);  // Prevent cache hits
+    options.create_if_missing = true;
 
     if (loaded_filters_number <= 0) {
       return;
     }
 
-    Reopen(&options);
+    DestroyAndReopen(&options);
 
     // Populate multiple layers
     const int N = 10000;

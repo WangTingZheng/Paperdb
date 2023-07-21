@@ -25,6 +25,7 @@ struct Table::Rep {
       // save sequence and hotness in multi queue
       // just evict all filter units
       multi_queue->Release(handle);
+      handle = nullptr;
     }
   }
 
@@ -161,41 +162,33 @@ static void DeleteCacheFilter(const Slice& key, FilterBlockReader* value) {
   delete value;
 }
 
-static void LoadFilterBGWork(void* arg){
-  FilterBlockReader* job = reinterpret_cast<FilterBlockReader*>(arg);
-  job->InitLoadFilter();
-}
-
 // get FilterBlockReader and saved in rep_->filter, we should return
 // cache handle and reader, so the pointer of reader passed in ReadFilter
 void Table::ReadMeta() {
   MultiQueue* multi_queue = rep_->options.multi_queue;
-  if (rep_->options.filter_policy == nullptr || rep_->reader != nullptr) {
+  if (rep_->options.filter_policy == nullptr || rep_->reader != nullptr
+      || rep_->handle != nullptr) {
     return;
   }
 
   if (multi_queue == nullptr) {
     if (rep_->reader == nullptr) {
       rep_->reader = ReadFilter();
-      rep_->reader->InitLoadFilter();
+      if(rep_->reader != nullptr) {
+        rep_->reader->InitLoadFilter();
+      }
     }
     return;
   }
 
-  if (rep_->handle) {
-    return;
-  }
-
-  FilterBlockReader* reader = nullptr;
 
   // Get filter block from cache, or read from disk and insert
   std::string filter_key = rep_->multi_cache_key;
   Slice key(filter_key.data(), filter_key.size());
 
   MultiQueue::Handle* handle = multi_queue->Lookup(key);
-  reader =  multi_queue->Value(handle);
-  if (reader == nullptr) { //not in multi queue, insert
-    reader = ReadFilter();
+  if (handle == nullptr) { //not in multi queue, insert
+    FilterBlockReader* reader = ReadFilter();
     if (reader != nullptr) {
       reader->InitLoadFilter();
       handle = multi_queue->Insert(key, reader, &DeleteCacheFilter);
@@ -203,7 +196,6 @@ void Table::ReadMeta() {
   } else{ // in multi queue, load filter
     // check filter unit number
     // prev file object will be free, update new file object
-    // todo add unit test
     multi_queue->GoBackToInitFilter(handle, rep_->file);
   }
 
@@ -294,13 +286,7 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
 bool Table::MultiQueueKeyMayMatch(uint64_t block_offset, const Slice& key) {
   MultiQueue* multi_queue = rep_->options.multi_queue;
   if(multi_queue && rep_->handle) {
-    // update access time first
-    FilterBlockReader* reader = multi_queue->Value(rep_->handle);
-    if(reader) {
-      bool is_exist = reader->KeyMayMatch(block_offset, key);
-      multi_queue->UpdateHandle(rep_->handle, key);
-      return is_exist;
-    }
+    return multi_queue->UpdateHandle(rep_->handle, block_offset, key);
   }
   return true;
 }

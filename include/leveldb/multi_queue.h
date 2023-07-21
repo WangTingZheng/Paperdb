@@ -41,7 +41,9 @@ class LEVELDB_EXPORT MultiQueue {
                          void (*deleter)(const Slice& key,
                                          FilterBlockReader* value)) = 0;
 
-  // Used by Table::Open
+  virtual bool UpdateHandle(Handle* handle, uint64_t block_offset,
+                            const Slice& key) = 0;
+
   // found a handle save in multi queue
   // key : [filter.filter name][table file id]
   virtual Handle* Lookup(const Slice& key) = 0;

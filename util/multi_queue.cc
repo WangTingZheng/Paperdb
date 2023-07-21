@@ -144,7 +144,8 @@ class InternalMultiQueue : public MultiQueue {
  public:
   explicit InternalMultiQueue() : usage_(0),
                                   logger_(nullptr),
-                                  adjustment_time_(0){
+                                  adjustment_time_(0),
+                                  scheduler(MQScheduler::Default()){
     queues_.resize(filters_number + 1);
     for (int i = 0; i < filters_number + 1; i++) {
       queues_[i] = new SingleQueue();
@@ -154,10 +155,8 @@ class InternalMultiQueue : public MultiQueue {
   ~InternalMultiQueue() override {
     // save adjustment times when db is over by force
     MutexLock l(&mutex_);
-#ifdef USE_ADJUSTMENT_LOGGING
     Log(logger_, "Adjustment: Apply %zu times until now",
         adjustment_time_.load(std::memory_order_acquire));
-#endif
 #ifdef DEBUG
     // check usage if same as map
     uint64_t real_usage = 0;
@@ -166,11 +165,15 @@ class InternalMultiQueue : public MultiQueue {
     }
     assert(real_usage == usage_);
 #endif
-
     for (int i = 0; i < filters_number + 1; i++) {
       delete queues_[i];
       queues_[i] = nullptr;
     }
+  }
+
+  static void LoadFilterBGWork(void* arg){
+    FilterBlockReader* job = reinterpret_cast<FilterBlockReader*>(arg);
+    job->InitLoadFilter();
   }
 
   Handle* Insert(const Slice& key, FilterBlockReader* reader,
@@ -187,10 +190,13 @@ class InternalMultiQueue : public MultiQueue {
     // update usage
     usage_ += reader->LoadFilterNumber() * reader->OneUnitSize();
 
+    scheduler->Schedule(LoadFilterBGWork, reader);
+
     return reinterpret_cast<Handle*>(handle);
   }
 
-  void UpdateHandle(Handle* handle, const Slice& key) override{
+  bool UpdateHandle(Handle* handle, uint64_t block_offset, const Slice& key) override{
+    MutexLock l(&mutex_);
     QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
     SingleQueue* single_queue = FindQueue(queue_handle);
     if(single_queue){
@@ -201,9 +207,15 @@ class InternalMultiQueue : public MultiQueue {
       ParsedInternalKey parsedInternalKey;
       if (ParseInternalKey(key, &parsedInternalKey)) {
         SequenceNumber sn = parsedInternalKey.sequence;
-        Adjustment(queue_handle, sn);
+        FilterBlockReader* reader = Value(handle);
+        if(reader) {
+          reader->UpdateState(sn);
+          Adjustment(queue_handle, sn);
+          return reader->KeyMayMatch(block_offset, key);
+        }
       }
     }
+    return true;
   }
 
   Handle* Lookup(const Slice& key) override {
@@ -291,7 +303,11 @@ class InternalMultiQueue : public MultiQueue {
   std::vector<SingleQueue*> queues_;
   std::unordered_map<std::string, QueueHandle*> map_;
 
-  std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn){
+  MQScheduler* scheduler GUARDED_BY(mutex_);
+
+  std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn)
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_){
+
     SingleQueue* queue = nullptr;
     std::vector<QueueHandle*> filters;
     for (int i = filters_number; i >= 1 && memory > 0; i--) {
@@ -330,8 +346,8 @@ class InternalMultiQueue : public MultiQueue {
     adjusted_ios += hot->reader->LoadIOs();
 
     if (adjusted_ios < original_ios) {
-#ifdef USE_ADJUSTMENT_LOGGING
       adjustment_time_.fetch_add(1);
+#ifdef USE_ADJUSTMENT_LOGGING
       LoggingAdjustmentInformation(colds.size(), hot->reader->FilterUnitsNumber(),
                                    hot->reader->AccessTime(),
                                    adjusted_ios, original_ios);
@@ -343,7 +359,8 @@ class InternalMultiQueue : public MultiQueue {
 
   void LoggingAdjustmentInformation(size_t cold_number, size_t hot_units_number,
                                     size_t access_time,
-                                  double adjusted_ios, double original_ios){
+                                  double adjusted_ios, double original_ios)
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_){
     Log(logger_,
         "Adjustment: Cold BF Number: %zu, Filter Units number of Hot BF: %zu, "
         "hot access frequency %zu, "
@@ -385,6 +402,7 @@ class InternalMultiQueue : public MultiQueue {
             s.ToString().c_str());
         adjustment_time_.fetch_sub(1);
 #endif
+        adjustment_time_.fetch_sub(1);
         return ;
       }
     }
@@ -396,6 +414,7 @@ class InternalMultiQueue : public MultiQueue {
           s.ToString().c_str());
       adjustment_time_.fetch_sub(1);
 #endif
+      adjustment_time_.fetch_sub(1);
     }
   }
 
@@ -403,7 +422,8 @@ class InternalMultiQueue : public MultiQueue {
     if (hot_handle && hot_handle->reader->CanBeLoaded()) {
       size_t memory = hot_handle->reader->OneUnitSize();
       std::vector<QueueHandle*> cold = FindColdFilter(memory, sn);
-      if (!cold.empty() && CanBeAdjusted(cold, hot_handle)) {
+      if(cold.empty()) return ;
+      if (CanBeAdjusted(cold, hot_handle)) {
         ApplyAdjustment(cold, hot_handle);
       }
     }

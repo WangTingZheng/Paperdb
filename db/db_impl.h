@@ -171,7 +171,7 @@ class DBImpl : public DB {
   FileLock* db_lock_;
 
   port::Mutex mq_schedule_mutex_;
-  bool destructor_wait_ GUARDED_BY(mq_schedule_mutex_);
+  std::atomic<bool> destructor_wait_;
   port::CondVar mq_schedule_cv_ GUARDED_BY(mq_schedule_mutex_);
 
   // State below is protected by mutex_

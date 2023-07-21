@@ -58,7 +58,6 @@ class MultiQueueTest : public testing::Test {
   MultiQueue::Handle* Insert(const Slice& key) {
     FilterBlockReader* reader = NewReader();
     MultiQueue::Handle* handle = multi_queue_->Insert(key, reader, MultiQueueTest::Deleter);
-    reader->InitLoadFilter();
     return handle;
   }
 
@@ -80,17 +79,13 @@ class MultiQueueTest : public testing::Test {
                                 SequenceNumber sn = 10) const {
     if(handle == nullptr) return true;
     InternalKey key("foo", sn, kTypeValue);
-    FilterBlockReader* reader = multi_queue_->Value(handle);
-    multi_queue_->UpdateHandle(handle, key.Encode());
-    return reader->KeyMayMatch(100, key.Encode());
+    return multi_queue_->UpdateHandle(handle, 100, key.Encode());
   }
 
   bool KeyMayMatchSearchNotExisted(MultiQueue::Handle* handle) const {
     if(handle == nullptr) return true;
     InternalKey key("key", 10, kTypeValue);
-    FilterBlockReader* reader = multi_queue_->Value(handle);
-    multi_queue_->UpdateHandle(handle, key.Encode());
-    return reader->KeyMayMatch(100, key.Encode());
+    return multi_queue_->UpdateHandle(handle, 100, key.Encode());
   }
 
   void GoBackToInitFilter(MultiQueue::Handle* handle) const {
@@ -131,6 +126,8 @@ TEST_F(MultiQueueTest, InsertAndErase) {
   if(filters_number <= 0) return ;
   MultiQueue::Handle* insert_handle = Insert("key1");
   ASSERT_NE(insert_handle, nullptr);
+
+  ASSERT_EQ(Value(insert_handle)->FilterUnitsNumber(), loaded_filters_number);
 
   // erase from cache
   Release(insert_handle);

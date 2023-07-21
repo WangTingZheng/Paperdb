@@ -78,6 +78,8 @@ class FilterBlockReader {
   Status GoBackToInitFilter(RandomAccessFile* file);
   ~FilterBlockReader();
 
+  void UpdateState(const SequenceNumber& sn);
+
   size_t LoadFilterNumber() const { return init_units_number_; }
 
   size_t FilterUnitsNumber()  {
@@ -145,6 +147,8 @@ class FilterBlockReader {
   size_t base_lg_;  // Encoding parameter (see kFilterBaseLg in .cc file)
   size_t num_;      // Number of entries in offset array
 
+  mutable port::Mutex mutex_;
+
   std::atomic<uint64_t> access_time_;
   std::atomic<SequenceNumber> sequence_;
 
@@ -153,7 +157,6 @@ class FilterBlockReader {
   std::vector<const char*> filter_units;
   bool heap_allocated_;
 
-  void UpdateState(const Slice& key);
   Status LoadFilterInternal();
   Status EvictFilterInternal();
 
