@@ -60,11 +60,11 @@ fi
 
 # add model prefix
 if [[ $model == "all" ]]; then
-  benchmark+=" --benchmarks=fillrandom,readrandom"
+  benchmark+=" --benchmarks=fillrandom,readhot"
   $benchmark "--multi_queue_open=1"
   $benchmark "--multi_queue_open=0"
 elif [[ $model == "read" ]]; then
-  benchmark+=" --benchmarks=readrandom"
+  benchmark+=" --benchmarks=readhot"
   benchmark+=" --use_existing_db=1"
   $benchmark "--multi_queue_open=1"
   $benchmark "--multi_queue_open=0"

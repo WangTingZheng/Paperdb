@@ -40,7 +40,7 @@ class LEVELDB_EXPORT MultiQueue {
                          void (*deleter)(const Slice& key,
                                          FilterBlockReader* value)) = 0;
 
-  virtual void DoAdjustment(Handle* handle, SequenceNumber sn) = 0;
+  virtual void DoAdjustment(Handle* handle, const SequenceNumber& sn) = 0;
 
   virtual bool UpdateHandle(Handle* handle, uint64_t block_offset,
                             const Slice& key) = 0;

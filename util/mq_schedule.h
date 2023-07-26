@@ -16,23 +16,19 @@
 namespace leveldb {
 
 struct BackgroundWorkItem {
-  explicit BackgroundWorkItem(void (*function)(void*, MultiQueue::Handle*,
-                                               SequenceNumber), void* arg,
-                              MultiQueue::Handle*handle, SequenceNumber sn)
-      : function(function), arg(arg),handle(handle), sn(sn) {}
+  explicit BackgroundWorkItem(void (*function)(void*), void* arg)
+      : function(function), arg(arg) {}
 
-  void (*const function)(void*, MultiQueue::Handle*, SequenceNumber);
+  void (*const function)(void*);
   void* const arg;
-  MultiQueue::Handle* handle;
-  SequenceNumber sn;
 };
 
 class MQScheduler {
  public:
   MQScheduler(): background_work_cv_(&background_work_mutex_), background_finished_cv_(&background_work_mutex_),
                  started_background_thread_(false), shutting_down_(true){}
-  void Schedule(void (*background_work_function)(void*,MultiQueue::Handle*, SequenceNumber),
-             void* background_work_arg, MultiQueue::Handle*handle, SequenceNumber sn);
+  void Schedule(void (*background_work_function)(void*),
+             void* background_work_arg);
 
   static MQScheduler* Default();
 
@@ -58,7 +54,6 @@ class MQScheduler {
     env->BackgroundThreadMain();
   }
 };
-
 }  // namespace leveldb
 
 #endif  // LEVELDB_MQ_SCHEDULE_H

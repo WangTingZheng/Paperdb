@@ -149,7 +149,7 @@ class SpecialEnv : public EnvWrapper {
   // Force log file close to fail while this bool is true.
   std::atomic<bool> log_file_close_;
 
-  bool count_random_reads_;
+  std::atomic<bool> count_random_reads_;
   AtomicCounter random_read_counter_;
 
   explicit SpecialEnv(Env* base)

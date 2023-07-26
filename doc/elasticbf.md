@@ -243,6 +243,7 @@ We use a background thread created by MQSchedule in ``until/mq_schedule.cc`` to 
 ```
 
 **Note:** Call env->Schedule() in env->Schedule() when Compaction thread want to insert a reader into multi queue will meet a deadlock, so we use an independent Schedule call MQSchedule to load filter in background thread.
+**Note:** We also use a background thread to adjust filter units in multi queue to reduce overhead in Get() Path.
 
 ### Adjustment policy
 

@@ -88,11 +88,11 @@ jobs:
       run: ctest -C "${{ env.CMAKE_BUILD_TYPE }}" --verbose
 
     - name: Run LevelDB Benchmarks
-      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0
+      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0 --bloom_bits=4
 
     - name: Run LevelDB Benchmarks without MQ
       if: ${{ runner.os == 'Linux' && matrix.optimized == false && matrix.compiler == 'clang' }}
-      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0 --multi_queue_open=0
+      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0 --multi_queue_open=0 --bloom_bits=4
 
     - name: Run SQLite Benchmarks
       if: ${{ runner.os != 'Windows' }}
@@ -128,8 +128,8 @@ jobs:
 
     - name: Run LevelDB Benchmarks with thread sanitizer
       if: ${{ runner.os == 'Linux' && matrix.optimized == false}}
-      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0
+      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0 --bloom_bits=4
 
     - name: Run LevelDB Benchmarks with thread sanitizer without MQ
       if: ${{ runner.os == 'Linux' && matrix.optimized == false && matrix.compiler == 'clang' }}
-      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0
+      run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0 --bloom_bits=4

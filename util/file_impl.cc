@@ -148,7 +148,7 @@ Status SpecialEnv::NewRandomAccessFile(const std::string& f, RandomAccessFile** 
   };
 
   Status s = target()->NewRandomAccessFile(f, r);
-  if (s.ok() && count_random_reads_) {
+  if (s.ok() && count_random_reads_.load(std::memory_order_acquire)) {
     *r = new CountingFile(*r, &random_read_counter_);
   }
   return s;

@@ -15,7 +15,6 @@ class Cache;
 class MultiQueue;
 class Comparator;
 class Env;
-class MQScheduler;
 class FilterPolicy;
 class Logger;
 class Snapshot;

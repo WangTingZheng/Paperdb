@@ -102,9 +102,11 @@ class SingleQueue {
       if (e == nullptr || e == mru_ || e == lru_) {
         break;
       }
-      if (e->reader->IsCold(sn) && e->reader->CanBeEvict()) {
+      if (e->reader->IsCold(sn)) {
         memory -= e->reader->OneUnitSize();
         filters.emplace_back(e);
+      } else {
+        break ;
       }
       e = e->prev;
     } while (memory > 0); // evict cold memory can be bigger than load a hot filter
@@ -167,11 +169,15 @@ class InternalMultiQueue : public MultiQueue {
     }
     assert(real_usage == usage_);
 #endif
-    // todo waiting for background thread done
     for (int i = 0; i < filters_number + 1; i++) {
       delete queues_[i];
       queues_[i] = nullptr;
     }
+  }
+
+  static void LoadFilterBGWork(void *arg){
+    FilterBlockReader* reader = static_cast<FilterBlockReader*>(arg);
+    reader->InitLoadFilter();
   }
 
   Handle* Insert(const Slice& key, FilterBlockReader* reader,
@@ -180,8 +186,7 @@ class InternalMultiQueue : public MultiQueue {
     if(reader == nullptr) return nullptr;
     // insert to queue
 
-    reader->InitLoadFilter();
-    size_t number = reader->FilterUnitsNumber();
+    size_t number = reader->LoadFilterNumber();
     SingleQueue* queue = queues_[number];
     QueueHandle* handle = queue->Insert(key, reader, deleter);
 
@@ -189,12 +194,14 @@ class InternalMultiQueue : public MultiQueue {
     map_.emplace(key.ToString(), handle);
 
     // update usage
-    usage_ += reader->Size();
+    usage_ += reader->LoadFilterNumber() * reader->OneUnitSize();
+
+    scheduler->Schedule(LoadFilterBGWork, reader);
 
     return reinterpret_cast<Handle*>(handle);
   }
 
-  void DoAdjustment(Handle* handle, SequenceNumber sn) override{
+  void DoAdjustment(Handle* handle, const SequenceNumber& sn) override{
     MutexLock l(&mutex_);
     QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
     SingleQueue* single_queue = FindQueue(queue_handle);
@@ -205,22 +212,32 @@ class InternalMultiQueue : public MultiQueue {
     }
   }
 
-  static void AdjustmentBGWork(void* arg, Handle* handle, SequenceNumber sn){
-    MultiQueue* multi_queue = static_cast<MultiQueue*>(arg);
-    if(multi_queue != nullptr){
-      multi_queue->DoAdjustment(handle, sn);
-    }
+  // todo: use reference maybe stuck?
+  static inline bool ParseKey(const Slice& key, SequenceNumber* sn){
+      const size_t n = key.size();
+      if (n < 8) return false;
+      uint64_t num = DecodeFixed64(key.data() + n - 8);
+      *sn = num >> 8;
+      return ((num & 0xff) <= static_cast<uint8_t>(kTypeValue));
   }
 
   bool UpdateHandle(Handle* handle, uint64_t block_offset, const Slice& key) override{
     // try to apply adjustment
-    ParsedInternalKey parsedInternalKey;
-    if (ParseInternalKey(key, &parsedInternalKey)) {
-      SequenceNumber sn = parsedInternalKey.sequence;
+    SequenceNumber sn;
+    if (ParseKey(key, &sn)) {
+#ifdef DEBUG
+      ParsedInternalKey internal_key;
+      assert(ParseInternalKey(key, &internal_key));
+      assert(internal_key.sequence == sn);
+#endif
       FilterBlockReader* reader = Value(handle);
       if (reader) {
+        // update access time first
         reader->UpdateState(sn);
-        scheduler->Schedule(AdjustmentBGWork, this, handle, sn);
+
+        // adjust if reader is hot
+        DoAdjustment(handle, sn);
+
         return reader->KeyMayMatch(block_offset, key);
       }
     }
@@ -315,7 +332,7 @@ class InternalMultiQueue : public MultiQueue {
 
   MQScheduler* scheduler;
 
-  std::vector<QueueHandle*> FindColdFilter(uint64_t memory, SequenceNumber sn)
+  std::vector<QueueHandle*> FindColdFilter(uint64_t memory, const SequenceNumber& sn)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){
     SingleQueue* queue = nullptr;
     std::vector<QueueHandle*> filters;
@@ -426,7 +443,7 @@ class InternalMultiQueue : public MultiQueue {
     }
   }
 
-  void Adjustment(QueueHandle* hot_handle, SequenceNumber sn)
+  void Adjustment(QueueHandle* hot_handle, const SequenceNumber& sn)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){
     if (hot_handle && hot_handle->reader->CanBeLoaded()) {
       size_t memory = hot_handle->reader->OneUnitSize();

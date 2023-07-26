@@ -295,8 +295,9 @@ class Stats {
   void AddMessage(Slice msg) { AppendWithSpace(&message_, msg); }
 
   void StartRecordingIO(){
+    //todo data race with compaction thread?
     SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
-    env->count_random_reads_ = true;
+    env->count_random_reads_.store(true, std::memory_order_release);
     env->random_read_counter_.Reset();
   }
 
@@ -335,9 +336,9 @@ class Stats {
           next_report_ += 50000;
         else
           next_report_ += 100000;
+        std::fprintf(stderr, "... finished %d ops%30s\r", done_, "");
+        std::fflush(stderr);
       }
-      std::fprintf(stderr, "... finished %d ops%30s\r", done_, "");
-      std::fflush(stderr);
     }
   }
 

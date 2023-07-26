@@ -94,18 +94,20 @@ class FilterBlockReader {
   }
 
   uint64_t AccessTime() const {
-    return access_time_.load(std::memory_order_acquire);
+    MutexLock l(&mutex_);
+    return access_time_;
   }
 
   bool IsCold(SequenceNumber now_sequence) {
-    return now_sequence >= (sequence_.load(std::memory_order_acquire) + life_time);
+    MutexLock l(&mutex_);
+    return now_sequence >= (sequence_ + life_time);
   }
 
   size_t OneUnitSize() const { return disk_size_; }
 
   bool CanBeLoaded() {
     MutexLock l(&mutex_);
-    return FilterUnitsNumberInternal() < filters_number;
+    return FilterUnitsNumberInternal() < all_units_number_;
   }
 
   bool CanBeEvict() {
@@ -113,7 +115,7 @@ class FilterBlockReader {
     return FilterUnitsNumberInternal() > 0;
   }
 
-  // filter block memory overhead(Byte), use by Cache->Insert
+  // filter block memory overhead(Byte)
   size_t Size() {
     MutexLock l(&mutex_);
     return FilterUnitsNumberInternal() * disk_size_;
@@ -125,14 +127,14 @@ class FilterBlockReader {
     MutexLock l(&mutex_);
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal()));
-    return fpr * static_cast<double>(access_time_.load(std::memory_order_acquire));
+    return fpr * static_cast<double>(access_time_);
   }
 
   double LoadIOs() {
     MutexLock l(&mutex_);
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal() + 1));
-    return fpr * static_cast<double>(access_time_.load(std::memory_order_acquire));
+    return fpr * static_cast<double>(access_time_);
   }
 
   double EvictIOs() {
@@ -140,7 +142,7 @@ class FilterBlockReader {
     assert(!filter_units.empty());
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal() - 1));
-    return fpr * static_cast<double>(access_time_.load(std::memory_order_acquire));
+    return fpr * static_cast<double>(access_time_);
   }
 
  private:
@@ -157,8 +159,8 @@ class FilterBlockReader {
   size_t num_;      // Number of entries in offset array
 
   mutable port::Mutex mutex_;
-  std::atomic<uint64_t> access_time_;
-  std::atomic<SequenceNumber> sequence_;
+  uint64_t access_time_ GUARDED_BY(mutex_);
+  SequenceNumber sequence_ GUARDED_BY(mutex_);
 
   RandomAccessFile* file_ GUARDED_BY(mutex_);
 

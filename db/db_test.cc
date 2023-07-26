@@ -1745,7 +1745,7 @@ TEST_F(DBTest, FilesDeletedAfterCompaction) {
 
 TEST_F(DBTest, BloomFilter) {
   do {
-    env_->count_random_reads_ = true;
+    env_->count_random_reads_.store(true, std::memory_order_release);
     Options options = CurrentOptions();
     if(options.filter_policy == nullptr){
       continue ;

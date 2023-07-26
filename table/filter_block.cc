@@ -150,8 +150,9 @@ FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
 }
 
 void FilterBlockReader::UpdateState(const SequenceNumber& sn) {
-  sequence_.store(sn, std::memory_order_release);
-  access_time_.fetch_add(1);
+  MutexLock l(&mutex_);
+  sequence_ = sn;
+  access_time_++;
 }
 
 bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
