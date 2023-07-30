@@ -117,9 +117,8 @@ FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
       base_lg_(0),
       file_(file),
       access_time_(0), // the time this table be access. todo: Hotness inheritance
-      sequence_(0),
-      init_done(false),
-      init_signal(&mutex_){ //last key's sequence's number pass in this reader, the beginning of this reader
+      sequence_(0) //last key's sequence's number pass in this reader, the beginning of this reader
+      {
   size_t n = contents.size();
   if (n < 25) return;  // 1 byte for base_lg_ and 21 for start of others
 
@@ -162,7 +161,6 @@ bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
     // limit should not larger than filter size
     if (start <= limit && limit <= static_cast<size_t>(disk_size_)) {
       Slice filter;
-      MutexLock l(&mutex_);
       // every filter return true, return true
       // at least one filter return false, return false
       // bloom filter has no false negative rate, but has false positive rate
@@ -192,7 +190,6 @@ bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
  * filter
  */
 Status FilterBlockReader::LoadFilterInternal() {
-  mutex_.AssertHeld();
   const uint64_t kFilterSize = disk_size_ + kBlockTrailerSize;
   uint64_t units_index = filter_units.size();
   if (units_index >= all_units_number_)
@@ -221,7 +218,6 @@ Status FilterBlockReader::LoadFilterInternal() {
 }
 
 Status FilterBlockReader::EvictFilterInternal() {
-  mutex_.AssertHeld();
   if (filter_units.empty())
     return Status::Corruption("there is no filter can be  evicted");
 
@@ -237,19 +233,14 @@ Status FilterBlockReader::EvictFilterInternal() {
 }
 
 Status FilterBlockReader::LoadFilter() {
-  MutexLock l(&mutex_);
   return LoadFilterInternal();
 }
 
 Status FilterBlockReader::EvictFilter() {
-  MutexLock l(&mutex_);
   return EvictFilterInternal();
 }
 
 Status FilterBlockReader::InitLoadFilter() {
-  // unlock and signal all thread to use filter
-  // when c is destroyed what ever function exit
-  CondVarSignal c(&mutex_, &init_done, &init_signal);
   Status s;
   // can not use FilterUnitsNumberInternal()
   while (filter_units.size() < init_units_number_) {
@@ -263,7 +254,6 @@ Status FilterBlockReader::InitLoadFilter() {
 }
 
 void FilterBlockReader::UpdateFile(RandomAccessFile* file) {
-  mutex_.AssertHeld();
   if(file != nullptr) {
     // file_ will be freed by table cache
     file_ = file;
@@ -271,8 +261,6 @@ void FilterBlockReader::UpdateFile(RandomAccessFile* file) {
 }
 
 Status FilterBlockReader::GoBackToInitFilter(RandomAccessFile* file) {
-  // todo: use CondVarSignal
-  MutexLock l(&mutex_);
   UpdateFile(file);
   if (init_units_number_ < 0) {
     return Status::Corruption("init units number is less than 0");

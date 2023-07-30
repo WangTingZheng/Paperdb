@@ -46,7 +46,7 @@ Status TableCache::NewRandomAccessFileForTable(const std::string& fname, RandomA
 }
 
 Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
-                             Cache::Handle** handle) {
+                             Cache::Handle** handle, bool get) {
   Status s;
   char buf[sizeof(file_number)];
   EncodeFixed64(buf, file_number);
@@ -64,7 +64,17 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
       }
     }
     if (s.ok()) {
+      MultiQueue *multi_queue = options_.multi_queue;
+      // get already lock in DB::Get, Lock again will meet deadlock
+      // multi queue is used in Open()
+      // NewIterator need to lock to avoid data race
+      if(!get && multi_queue){
+        multi_queue->Lock();
+      }
       s = Table::Open(options_, file, file_size, &table, file_number);
+      if(!get && multi_queue){
+        multi_queue->UnLock();
+      }
     }
 
     if (!s.ok()) {
@@ -90,7 +100,7 @@ Iterator* TableCache::NewIterator(const ReadOptions& options,
   }
 
   Cache::Handle* handle = nullptr;
-  Status s = FindTable(file_number, file_size, &handle);
+  Status s = FindTable(file_number, file_size, &handle, false);
   if (!s.ok()) {
     return NewErrorIterator(s);
   }
@@ -109,7 +119,7 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
                        void (*handle_result)(void*, const Slice&,
                                              const Slice&)) {
   Cache::Handle* handle = nullptr;
-  Status s = FindTable(file_number, file_size, &handle);
+  Status s = FindTable(file_number, file_size, &handle, true);
   if (s.ok()) {
     Table* t = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->table;
     s = t->InternalGet(options, k, arg, handle_result);

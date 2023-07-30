@@ -83,13 +83,10 @@ class FilterBlockReader {
   size_t LoadFilterNumber() const { return init_units_number_; }
 
   size_t FilterUnitsNumber()  {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal();
   }
 
   size_t FilterUnitsNumberInternal() {
-    mutex_.AssertHeld();
-    WaitForLoading();
     return filter_units.size();
   }
 
@@ -111,34 +108,29 @@ class FilterBlockReader {
   }
 
   bool CanBeEvict() {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal() > 0;
   }
 
   // filter block memory overhead(Byte)
   size_t Size() {
-    MutexLock l(&mutex_);
     return FilterUnitsNumberInternal() * disk_size_;
   }
 
   // R: (r)^n
   // IO: R*F
   double IOs() {
-    MutexLock l(&mutex_);
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal()));
     return fpr * static_cast<double>(access_time_);
   }
 
   double LoadIOs() {
-    MutexLock l(&mutex_);
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal() + 1));
     return fpr * static_cast<double>(access_time_);
   }
 
   double EvictIOs() {
-    MutexLock l(&mutex_);
     assert(!filter_units.empty());
     double fpr = pow(policy_->FalsePositiveRate(),
                      static_cast<double>(FilterUnitsNumberInternal() - 1));
@@ -162,7 +154,7 @@ class FilterBlockReader {
   uint64_t access_time_ GUARDED_BY(mutex_);
   SequenceNumber sequence_ GUARDED_BY(mutex_);
 
-  RandomAccessFile* file_ GUARDED_BY(mutex_);
+  RandomAccessFile* file_;
 
   std::vector<const char*> filter_units GUARDED_BY(mutex_);
   std::vector<ReadBuffer*> reader_buffers_ GUARDED_BY(mutex_);
@@ -171,19 +163,6 @@ class FilterBlockReader {
   Status EvictFilterInternal();
 
   void UpdateFile(RandomAccessFile* file);
-
-  bool init_done GUARDED_BY(mutex_);
-  port::CondVar init_signal GUARDED_BY(mutex_);
-
-  // main thread maybe read unloaded filterblockreader
-  // when background thread does not finish
-  // waiting for background thread signal
-  void WaitForLoading(){
-    mutex_.AssertHeld();
-    while (!init_done){
-      init_signal.Wait();
-    }
-  }
 };
 
 }  // namespace leveldb
