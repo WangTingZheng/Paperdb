@@ -1,6 +1,7 @@
 #include "leveldb/multi_queue.h"
 
 #include <unordered_map>
+#include "mq_schedule.h"
 #include "mutexlock.h"
 
 namespace leveldb {
@@ -144,7 +145,8 @@ class InternalMultiQueue : public MultiQueue {
  public:
   explicit InternalMultiQueue() : usage_(0),
                                   logger_(nullptr),
-                                  adjustment_time_(0){
+                                  adjustment_time_(0),
+                                  scheduler(MQScheduler::Default()){
     queues_.resize(filters_number + 1);
     for (int i = 0; i < filters_number + 1; i++) {
       queues_[i] = new SingleQueue();
@@ -153,6 +155,9 @@ class InternalMultiQueue : public MultiQueue {
 
   ~InternalMultiQueue() override {
     // save adjustment times when db is over by force
+    shutting_down_mutex_.Lock();
+    scheduler->ShutDown();
+    shutting_down_mutex_.Unlock();
     MutexLock l(&mutex_);
     Log(logger_, "Adjustment: Apply %zu times until now",
         adjustment_time_.load(std::memory_order_acquire));
@@ -170,14 +175,18 @@ class InternalMultiQueue : public MultiQueue {
     }
   }
 
+  static void LoadFilterBGWork(void *arg){
+    FilterBlockReader* reader = static_cast<FilterBlockReader*>(arg);
+    reader->InitLoadFilter();
+  }
+
   Handle* Insert(const Slice& key, FilterBlockReader* reader,
                  void (*deleter)(const Slice&, FilterBlockReader*)) override {
     MutexLock l(&mutex_);
     if(reader == nullptr) return nullptr;
     // insert to queue
 
-    reader->InitLoadFilter();
-    size_t number = reader->FilterUnitsNumber();
+    size_t number = reader->LoadFilterNumber();
     SingleQueue* queue = queues_[number];
     QueueHandle* handle = queue->Insert(key, reader, deleter);
 
@@ -185,7 +194,10 @@ class InternalMultiQueue : public MultiQueue {
     map_.emplace(key.ToString(), handle);
 
     // update usage
-    usage_ += reader->Size();
+    usage_ += reader->LoadFilterNumber() * reader->OneUnitSize();
+
+    scheduler->Schedule(LoadFilterBGWork, reader);
+
     return reinterpret_cast<Handle*>(handle);
   }
 
@@ -313,9 +325,12 @@ class InternalMultiQueue : public MultiQueue {
   std::atomic<size_t> adjustment_time_;
 
   mutable port::Mutex mutex_;
+  mutable port::Mutex shutting_down_mutex_;
 
   std::vector<SingleQueue*> queues_ GUARDED_BY(mutex_);
   std::unordered_map<std::string, QueueHandle*> map_ GUARDED_BY(mutex_);
+
+  MQScheduler* scheduler;
 
   std::vector<QueueHandle*> FindColdFilter(uint64_t memory, const SequenceNumber& sn)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){
