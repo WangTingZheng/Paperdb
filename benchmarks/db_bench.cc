@@ -2,24 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include <sys/types.h>
-
+#include "db/filename.h"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <sys/types.h>
 
 #include "leveldb/cache.h"
 #include "leveldb/comparator.h"
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/filter_policy.h"
+#include "leveldb/multi_queue.h"
 #include "leveldb/write_batch.h"
+
 #include "port/port.h"
 #include "util/crc32c.h"
 #include "util/histogram.h"
 #include "util/mutexlock.h"
 #include "util/random.h"
 #include "util/testutil.h"
+#include "util/file_impl.h"
 
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
@@ -53,6 +56,7 @@ static const char* FLAGS_benchmarks =
     "readrandom,"  // Extra run to allow previous compactions to quiesce
     "readseq,"
     "readreverse,"
+    "readwhilewriting,"
     "compact,"
     "readrandom,"
     "readseq,"
@@ -102,6 +106,9 @@ static int FLAGS_block_size = 0;
 // Negative means use default settings.
 static int FLAGS_cache_size = -1;
 
+// If true, use multi queue to manage filter, adjustment will be active
+static bool FLAGS_multi_queue_open = true;
+
 // Maximum number of files to keep open at the same time (use default if == 0)
 static int FLAGS_open_files = 0;
 
@@ -123,11 +130,19 @@ static bool FLAGS_reuse_logs = false;
 // If true, use compression.
 static bool FLAGS_compression = true;
 
+// If true, print FinishedSingleOp log
+static bool FLAGS_print_process = true;
+
 // Use the db with the following name.
 static const char* FLAGS_db = nullptr;
 
 // ZSTD compression level to try out
 static int FLAGS_zstd_compression_level = 1;
+
+// If true, remove all bench related file after benchmarking
+static bool FLAGS_clean_bench_file = false;
+
+static bool FLAGS_save_ios = true;
 
 namespace leveldb {
 
@@ -279,6 +294,19 @@ class Stats {
 
   void AddMessage(Slice msg) { AppendWithSpace(&message_, msg); }
 
+  void StartRecordingIO(){
+    //todo data race with compaction thread?
+    SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
+    env->count_random_reads_.store(true, std::memory_order_release);
+    env->random_read_counter_.Reset();
+  }
+
+  int FinishedRecordingIO(){
+    SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
+    int reads = env->random_read_counter_.Read();
+    return reads;
+  }
+
   void FinishedSingleOp() {
     if (FLAGS_histogram) {
       double now = g_env->NowMicros();
@@ -292,23 +320,25 @@ class Stats {
     }
 
     done_++;
-    if (done_ >= next_report_) {
-      if (next_report_ < 1000)
-        next_report_ += 100;
-      else if (next_report_ < 5000)
-        next_report_ += 500;
-      else if (next_report_ < 10000)
-        next_report_ += 1000;
-      else if (next_report_ < 50000)
-        next_report_ += 5000;
-      else if (next_report_ < 100000)
-        next_report_ += 10000;
-      else if (next_report_ < 500000)
-        next_report_ += 50000;
-      else
-        next_report_ += 100000;
-      std::fprintf(stderr, "... finished %d ops%30s\r", done_, "");
-      std::fflush(stderr);
+    if(FLAGS_print_process) {
+      if (done_ >= next_report_) {
+        if (next_report_ < 1000)
+          next_report_ += 100;
+        else if (next_report_ < 5000)
+          next_report_ += 500;
+        else if (next_report_ < 10000)
+          next_report_ += 1000;
+        else if (next_report_ < 50000)
+          next_report_ += 5000;
+        else if (next_report_ < 100000)
+          next_report_ += 10000;
+        else if (next_report_ < 500000)
+          next_report_ += 50000;
+        else
+          next_report_ += 100000;
+        std::fprintf(stderr, "... finished %d ops%30s\r", done_, "");
+        std::fflush(stderr);
+      }
     }
   }
 
@@ -545,6 +575,10 @@ class Benchmark {
 
   ~Benchmark() {
     delete db_;
+    // waiting for unlock database
+    if(FLAGS_clean_bench_file){
+      DestroyDB(FLAGS_db, Options());
+    }
     delete cache_;
     delete filter_policy_;
   }
@@ -804,6 +838,7 @@ class Benchmark {
     Options options;
     options.env = g_env;
     options.create_if_missing = !FLAGS_use_existing_db;
+    options.bloom_filter_adjustment = FLAGS_multi_queue_open;
     options.block_cache = cache_;
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_file_size = FLAGS_max_file_size;
@@ -896,6 +931,9 @@ class Benchmark {
     std::string value;
     int found = 0;
     KeyBuffer key;
+    if(FLAGS_save_ios) {
+      thread->stats.StartRecordingIO();
+    }
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
@@ -905,7 +943,13 @@ class Benchmark {
       thread->stats.FinishedSingleOp();
     }
     char msg[100];
-    std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
+    if(FLAGS_save_ios) {
+      int reads = thread->stats.FinishedRecordingIO();
+      std::snprintf(msg, sizeof(msg), "(%d of %d found), cause %d io", found, num_, reads);
+    }else {
+      std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
+    }
+
     thread->stats.AddMessage(msg);
   }
 
@@ -1093,6 +1137,12 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--compression=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_compression = n;
+    }else if (sscanf(argv[i], "--print_process=%d%c", &n, &junk) == 1 &&
+               (n == 0 || n == 1)) {
+      FLAGS_print_process = n;
+    }else if (sscanf(argv[i], "--clean_bench_file=%d%c", &n, &junk) == 1 &&
+                 (n == 0 || n == 1)) {
+        FLAGS_clean_bench_file = n;
     } else if (sscanf(argv[i], "--num=%d%c", &n, &junk) == 1) {
       FLAGS_num = n;
     } else if (sscanf(argv[i], "--reads=%d%c", &n, &junk) == 1) {
@@ -1111,7 +1161,13 @@ int main(int argc, char** argv) {
       FLAGS_key_prefix = n;
     } else if (sscanf(argv[i], "--cache_size=%d%c", &n, &junk) == 1) {
       FLAGS_cache_size = n;
-    } else if (sscanf(argv[i], "--bloom_bits=%d%c", &n, &junk) == 1) {
+    } else if (sscanf(argv[i], "--multi_queue_open=%d%c", &n, &junk) == 1 &&
+               (n == 0 || n == 1)) {
+      FLAGS_multi_queue_open = n;
+    } else if (sscanf(argv[i], "--save_io=%d%c", &n, &junk) == 1 &&
+           (n == 0 || n == 1)) {
+      FLAGS_save_ios = n;
+    }else if (sscanf(argv[i], "--bloom_bits=%d%c", &n, &junk) == 1) {
       FLAGS_bloom_bits = n;
     } else if (sscanf(argv[i], "--open_files=%d%c", &n, &junk) == 1) {
       FLAGS_open_files = n;
@@ -1124,6 +1180,9 @@ int main(int argc, char** argv) {
   }
 
   leveldb::g_env = leveldb::Env::Default();
+  if(FLAGS_save_ios){
+    leveldb::g_env = new leveldb::SpecialEnv(leveldb::g_env);
+  }
 
   // Choose a location for the test database if none given with --db=<path>
   if (FLAGS_db == nullptr) {

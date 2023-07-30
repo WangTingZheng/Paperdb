@@ -25,6 +25,10 @@
 #cmakedefine01 HAVE_CRC32C
 #endif  // !defined(HAVE_CRC32C)
 
+#if !defined(USE_ADJUSTMENT_LOGGING)
+#cmakedefine01 USE_ADJUSTMENT_LOGGING
+#endif // !defined(USE_ADJUSTMENT_LOGGING)
+
 // Define to 1 if you have Google Snappy.
 #if !defined(HAVE_SNAPPY)
 #cmakedefine01 HAVE_SNAPPY

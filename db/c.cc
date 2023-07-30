@@ -111,7 +111,11 @@ struct leveldb_filterpolicy_t : public FilterPolicy {
 
   const char* Name() const override { return (*name_)(state_); }
 
-  void CreateFilter(const Slice* keys, int n, std::string* dst) const override {
+  // CreateFilter call create_
+  // create_ define in c_test.c
+  // create_ has immutable result
+  // so index make no sense
+  void CreateFilter(const Slice* keys, int n, std::string* dst, int index) const override {
     std::vector<const char*> key_pointers(n);
     std::vector<size_t> key_sizes(n);
     for (int i = 0; i < n; i++) {
@@ -124,10 +128,18 @@ struct leveldb_filterpolicy_t : public FilterPolicy {
     std::free(filter);
   }
 
-  bool KeyMayMatch(const Slice& key, const Slice& filter) const override {
+  // KeyMayMatch call key_match_
+  // key_match_ define in c_test.c
+  // key_match_ has immutable result
+  // so index make no sense
+  bool KeyMayMatch(const Slice& key, const Slice& filter, int index) const override {
     return (*key_match_)(state_, key.data(), key.size(), filter.data(),
                          filter.size());
   }
+
+  // todo: false positive rate is useless for this filter?
+  // maybe ycsb will use it
+  double  FalsePositiveRate() const override { return false_positive_rate_(); }
 
   void* state_;
   void (*destructor_)(void*);
@@ -137,6 +149,8 @@ struct leveldb_filterpolicy_t : public FilterPolicy {
                    size_t* filter_length);
   uint8_t (*key_match_)(void*, const char* key, size_t length,
                         const char* filter, size_t filter_length);
+
+  double (*false_positive_rate_)();
 };
 
 struct leveldb_env_t {
@@ -452,13 +466,15 @@ leveldb_filterpolicy_t* leveldb_filterpolicy_create(
                            size_t* filter_length),
     uint8_t (*key_may_match)(void*, const char* key, size_t length,
                              const char* filter, size_t filter_length),
-    const char* (*name)(void*)) {
+    const char* (*name)(void*),
+    double (*false_positive_rate)()) {
   leveldb_filterpolicy_t* result = new leveldb_filterpolicy_t;
   result->state_ = state;
   result->destructor_ = destructor;
   result->create_ = create_filter;
   result->key_match_ = key_may_match;
   result->name_ = name;
+  result->false_positive_rate_ = false_positive_rate;
   return result;
 }
 
@@ -475,11 +491,11 @@ leveldb_filterpolicy_t* leveldb_filterpolicy_create_bloom(int bits_per_key) {
 
     ~Wrapper() { delete rep_; }
     const char* Name() const { return rep_->Name(); }
-    void CreateFilter(const Slice* keys, int n, std::string* dst) const {
-      return rep_->CreateFilter(keys, n, dst);
+    void CreateFilter(const Slice* keys, int n, std::string* dst, int index) const {
+      return rep_->CreateFilter(keys, n, dst, index);
     }
-    bool KeyMayMatch(const Slice& key, const Slice& filter) const {
-      return rep_->KeyMayMatch(key, filter);
+    bool KeyMayMatch(const Slice& key, const Slice& filter, int index) const {
+      return rep_->KeyMayMatch(key, filter, index);
     }
 
     const FilterPolicy* rep_;

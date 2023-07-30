@@ -3,9 +3,8 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include "table/filter_block.h"
-
 #include "leveldb/filter_policy.h"
-#include "util/coding.h"
+#include "util/condvar_signal.h"
 
 namespace leveldb {
 
@@ -16,7 +15,10 @@ static const size_t kFilterBaseLg = 11;
 static const size_t kFilterBase = 1 << kFilterBaseLg;
 
 FilterBlockBuilder::FilterBlockBuilder(const FilterPolicy* policy)
-    : policy_(policy) {}
+    : policy_(policy) {
+  // when filters_number small than 1, FilterBlockBuilder will not be call
+  filter_units_.resize(filters_number);
+}
 
 void FilterBlockBuilder::StartBlock(uint64_t block_offset) {
   uint64_t filter_index = (block_offset / kFilterBase);
@@ -32,19 +34,45 @@ void FilterBlockBuilder::AddKey(const Slice& key) {
   keys_.append(k.data(), k.size());
 }
 
-Slice FilterBlockBuilder::Finish() {
+const std::vector<std::string>& FilterBlockBuilder::ReturnFilters() {
   if (!start_.empty()) {
     GenerateFilter();
   }
 
+  // const & to reduce vector copy overhead
+  return filter_units_;
+}
+
+/*
+ * filter offset <--- unint32_t for every offset
+ * offset        <--- unint64_t  first filter offset in disk
+ * size          <--- unint32_t  one filter size
+ * loaded        <--- unint32_t  the number of filter to load when
+ * FilterBlockReader is created number        <--- unint32_t  all filters number
+ * baselg        <--- char
+ */
+Slice FilterBlockBuilder::Finish(const BlockHandle& handle) {
   // Append array of per-filter offsets
-  const uint32_t array_offset = result_.size();
   for (size_t i = 0; i < filter_offsets_.size(); i++) {
     PutFixed32(&result_, filter_offsets_[i]);
   }
 
-  PutFixed32(&result_, array_offset);
+  // generate limit offset for last filter
+  // array offset is last filter's limit in leveldb
+  // but we remove it
+  // todo : deal with a filter block without filter units
+  PutFixed32(&result_, filter_units_[0].size());
+
+  PutFixed64(&result_, handle.offset());
+  // Todo: Change To int64
+  PutFixed32(&result_, handle.size());
+  PutFixed32(&result_, loaded_filters_number);
+  PutFixed32(&result_, filters_number);
+
   result_.push_back(kFilterBaseLg);  // Save encoding parameter in result
+
+  // to reduce copy overhead, string can not be modified
+  // similar to const string&
   return Slice(result_);
 }
 
@@ -52,7 +80,8 @@ void FilterBlockBuilder::GenerateFilter() {
   const size_t num_keys = start_.size();
   if (num_keys == 0) {
     // Fast path if there are no keys for this filter
-    filter_offsets_.push_back(result_.size());
+    // all filters has same structure, so pick up filter 0
+    filter_offsets_.push_back(filter_units_[0].size());
     return;
   }
 
@@ -66,8 +95,12 @@ void FilterBlockBuilder::GenerateFilter() {
   }
 
   // Generate filter for current set of keys and append to result_.
-  filter_offsets_.push_back(result_.size());
-  policy_->CreateFilter(&tmp_keys_[0], static_cast<int>(num_keys), &result_);
+  filter_offsets_.push_back(filter_units_[0].size());
+  for (int i = 0; i < filters_number; i++) {
+    // generate different bitmap for different filter units
+    policy_->CreateFilter(&tmp_keys_[0], static_cast<int>(num_keys),
+                          &filter_units_[i], i);
+  }
 
   tmp_keys_.clear();
   keys_.clear();
@@ -75,16 +108,51 @@ void FilterBlockBuilder::GenerateFilter() {
 }
 
 FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
-                                     const Slice& contents)
-    : policy_(policy), data_(nullptr), offset_(nullptr), num_(0), base_lg_(0) {
+                                     const Slice& contents,
+                                     RandomAccessFile* file)
+    : policy_(policy),
+      data_(nullptr),
+      offset_(nullptr),
+      num_(0),
+      base_lg_(0),
+      file_(file),
+      heap_allocated_(false), // if false, manage data by mmap
+      access_time_(0), // the time this table be access. todo: Hotness inheritance
+      sequence_(0),
+      init_done(false),
+      init_signal(&mutex_){ //last key's sequence's number pass in this reader, the beginning of this reader
   size_t n = contents.size();
-  if (n < 5) return;  // 1 byte for base_lg_ and 4 for start of offset array
+  if (n < 25) return;  // 1 byte for base_lg_ and 21 for start of others
+
+  /*
+   * meta data for filter units' bitmaps layout:
+   * filter offset  <--- data + 0
+   * filterunit len <--- data + n - 25
+   * offset         <--- data + n - 21  | 8Byte 4Byte can only index 4GB disk
+   * offset size           <--- data + n - 13  | 4Byte loaded         <--- data
+   * + n - 9   | 4Byte number         <--- data + n - 5   | 4Byte base lg <---
+   * data + n - 1   | 1Byte
+   */
   base_lg_ = contents[n - 1];
-  uint32_t last_word = DecodeFixed32(contents.data() + n - 5);
-  if (last_word > n - 5) return;
   data_ = contents.data();
-  offset_ = data_ + last_word;
-  num_ = (n - 5 - last_word) / 4;
+  all_units_number_ = DecodeFixed32(data_ + n - 5);
+  if (all_units_number_ < 0) return;
+
+  init_units_number_ = DecodeFixed32(data_ + n - 9);
+
+  if (init_units_number_ < 0 && init_units_number_ > all_units_number_) return;
+
+  disk_size_ = DecodeFixed32(data_ + n - 13);
+  disk_offset_ = DecodeFixed64(data_ + n - 21);
+  offset_ = contents.data();
+
+  num_ = (n - 25) / 4;
+}
+
+void FilterBlockReader::UpdateState(const SequenceNumber& sn) {
+  MutexLock l(&mutex_);
+  sequence_ = sn;
+  access_time_++;
 }
 
 bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
@@ -92,9 +160,20 @@ bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
   if (index < num_) {
     uint32_t start = DecodeFixed32(offset_ + index * 4);
     uint32_t limit = DecodeFixed32(offset_ + index * 4 + 4);
-    if (start <= limit && limit <= static_cast<size_t>(offset_ - data_)) {
-      Slice filter = Slice(data_ + start, limit - start);
-      return policy_->KeyMayMatch(key, filter);
+    // limit should not larger than filter size
+    if (start <= limit && limit <= static_cast<size_t>(disk_size_)) {
+      Slice filter;
+      MutexLock l(&mutex_);
+      // every filter return true, return true
+      // at least one filter return false, return false
+      // bloom filter has no false negative rate, but has false positive rate
+      for (int i = 0; i < FilterUnitsNumberInternal(); i++) {
+        filter = Slice(filter_units[i] + start, limit - start);
+        if (!policy_->KeyMayMatch(key, filter, i)) {
+          return false;
+        }
+      }
+      return true;
     } else if (start == limit) {
       // Empty filters do not match any keys
       return false;
@@ -103,4 +182,135 @@ bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
   return true;  // Errors are treated as potential matches
 }
 
+/*
+ * filters in disk layout:
+ * trailer type(kNoCompression) CRC <--- disk_offset
+ * filter
+ * trailer type(kNoCompression) CRC <--- disk_offset + (disk_size +
+ * kBlockTrailerSize) filter
+ * .........
+ * trailer type(kNoCompression) CRC
+ * filter
+ */
+Status FilterBlockReader::LoadFilterInternal() {
+  mutex_.AssertHeld();
+  const uint64_t kFilterSize = disk_size_ + kBlockTrailerSize;
+  uint64_t units_index = filter_units.size();
+  if (units_index >= all_units_number_)
+    return Status::Corruption("all filter units were loaded");
+
+  ReadOptions readOptions;
+  readOptions.verify_checksums = true;
+
+  BlockHandle handle;
+  BlockContents contents;
+
+  // every filter has same size: disk_size_ + kBlockTrailerSize
+  uint64_t offset = disk_offset_ + kFilterSize * units_index;
+  handle.set_offset(offset);
+  handle.set_size(disk_size_);
+
+  Status s = ReadBlock(file_, readOptions, handle, &contents);
+
+  if (!s.ok()) {
+    return s;
+  }
+
+  // if heap_allocated, delete by FilterBlockReader
+  // if not, delete by mmap
+  heap_allocated_ = contents.heap_allocated;
+  filter_units.push_back(contents.data.data());
+  return s;
+}
+
+Status FilterBlockReader::EvictFilterInternal() {
+  mutex_.AssertHeld();
+  if (filter_units.empty())
+    return Status::Corruption("there is no filter can be  evicted");
+
+  // load from left to right
+  // evict from right to left
+  const char* data = filter_units.back();
+  if (heap_allocated_) {
+    delete[] data;
+  }
+  filter_units.pop_back();
+  return Status::OK();
+}
+
+Status FilterBlockReader::LoadFilter() {
+  MutexLock l(&mutex_);
+  return LoadFilterInternal();
+}
+
+Status FilterBlockReader::EvictFilter() {
+  MutexLock l(&mutex_);
+  return EvictFilterInternal();
+}
+
+Status FilterBlockReader::InitLoadFilter() {
+  // unlock and signal all thread to use filter
+  // when c is destroyed what ever function exit
+  CondVarSignal c(&mutex_, &init_done, &init_signal);
+  Status s;
+  // can not use FilterUnitsNumberInternal()
+  while (filter_units.size() < init_units_number_) {
+    s = LoadFilterInternal();
+    if (!s.ok()) {
+      // todo: error handle
+      return s;
+    }
+  }
+  return s;
+}
+
+void FilterBlockReader::UpdateFile(RandomAccessFile* file) {
+  mutex_.AssertHeld();
+  if(file != nullptr) {
+    // file_ will be freed by table cache
+    file_ = file;
+  }
+}
+
+Status FilterBlockReader::GoBackToInitFilter(RandomAccessFile* file) {
+  // todo: use CondVarSignal
+  MutexLock l(&mutex_);
+  UpdateFile(file);
+  if (init_units_number_ < 0) {
+    return Status::Corruption("init units number is less than 0");
+  }
+
+  if (init_units_number_ > filters_number) {
+    return Status::Corruption("init units number is too much");
+  }
+
+  Status s;
+  while (FilterUnitsNumberInternal() < init_units_number_) {
+    s = LoadFilterInternal();
+    if (!s.ok()) {
+      return s;
+    }
+  }
+
+  while (FilterUnitsNumberInternal() > init_units_number_) {
+    s = EvictFilterInternal();
+    if (!s.ok()) {
+      return s;
+    }
+  }
+
+  return s;
+}
+
+FilterBlockReader::~FilterBlockReader() {
+  MutexLock l(&mutex_);
+  WaitForLoading();
+  if (heap_allocated_) {
+    for (const char* filter_unit : filter_units) {
+      delete[] filter_unit;
+    }
+  }
+
+  delete[] data_;
+}
 }  // namespace leveldb

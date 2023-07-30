@@ -100,6 +100,9 @@ void AutoCompactTest::DoReads(int n) {
   // is pretty much unchanged.
   const int64_t final_other_size = Size(Key(n), Key(kCount));
   ASSERT_LE(final_other_size, initial_other_size + 1048576);
+  // maybe failed, just see
+  // [leveldb GitHub issue]Intermittent AutoCompactTest.ReadHalf failures
+  // in https://github.com/google/leveldb/issues/803
   ASSERT_GE(final_other_size, initial_other_size / 5 - 1048576);
 }
 

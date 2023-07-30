@@ -8,12 +8,10 @@
 
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
-#include "leveldb/filter_policy.h"
 #include "leveldb/options.h"
+
 #include "table/block_builder.h"
 #include "table/filter_block.h"
-#include "table/format.h"
-#include "util/coding.h"
 #include "util/crc32c.h"
 
 namespace leveldb {
@@ -27,8 +25,8 @@ struct TableBuilder::Rep {
         data_block(&options),
         index_block(&index_block_options),
         num_entries(0),
-        closed(false),
-        filter_block(opt.filter_policy == nullptr
+        closed(false), // filter policy or filters number is invalid, do not use bf
+        filter_block(opt.filter_policy == nullptr || filters_number <= 0
                          ? nullptr
                          : new FilterBlockBuilder(opt.filter_policy)),
         pending_index_entry(false) {
@@ -208,6 +206,39 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
   }
 }
 
+void TableBuilder::WriteRawFilters(const std::vector<std::string>& filters,
+                                   CompressionType type, BlockHandle* handle) {
+  assert(!filters.empty());
+  Rep* r = rep_;
+  handle->set_offset(r->offset);
+  handle->set_size(filters[0].size());
+  /*
+   * filters in disk layout
+   * trailer type(kNoCompression) CRC <--- disk_offset
+   * filter
+   * trailer type(kNoCompression) CRC <--- disk_offset + (disk_size +
+   * kBlockTrailerSize) filter
+   * .........
+   * trailer type(kNoCompression) CRC
+   * filter
+   */
+  for (const auto& filter : filters) {
+    Slice filter_slice = Slice(filter);
+    r->status = r->file->Append(filter_slice);
+    if (r->status.ok()) {
+      char trailer[kBlockTrailerSize];
+      trailer[0] = type;
+      uint32_t crc = crc32c::Value(filter_slice.data(), filter_slice.size());
+      crc = crc32c::Extend(crc, trailer, 1);  // Extend crc to cover block type
+      EncodeFixed32(trailer + 1, crc32c::Mask(crc));
+      r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
+      if (r->status.ok()) {
+        r->offset += filter_slice.size() + kBlockTrailerSize;
+      }
+    }
+  }
+}
+
 Status TableBuilder::status() const { return rep_->status; }
 
 Status TableBuilder::Finish() {
@@ -216,12 +247,17 @@ Status TableBuilder::Finish() {
   assert(!r->closed);
   r->closed = true;
 
-  BlockHandle filter_block_handle, metaindex_block_handle, index_block_handle;
+  BlockHandle metaindex_block_handle, index_block_handle;
+  Slice filter_block_meta;
 
   // Write filter block
   if (ok() && r->filter_block != nullptr) {
-    WriteRawBlock(r->filter_block->Finish(), kNoCompression,
-                  &filter_block_handle);
+    // Only TableBuilder save offset of the file
+    // so write filter by TableBuilder
+    BlockHandle filters_handle;
+    const std::vector<std::string>& filters = r->filter_block->ReturnFilters();
+    WriteRawFilters(filters, kNoCompression, &filters_handle);
+    filter_block_meta = r->filter_block->Finish(filters_handle);
   }
 
   // Write metaindex block
@@ -231,9 +267,7 @@ Status TableBuilder::Finish() {
       // Add mapping from "filter.Name" to location of filter data
       std::string key = "filter.";
       key.append(r->options.filter_policy->Name());
-      std::string handle_encoding;
-      filter_block_handle.EncodeTo(&handle_encoding);
-      meta_index_block.Add(key, handle_encoding);
+      meta_index_block.Add(key, filter_block_meta);
     }
 
     // TODO(postrelease): Add stats and other meta blocks

@@ -141,6 +141,9 @@ uint8_t FilterKeyMatch(void* arg, const char* key, size_t length,
   CheckCondition(memcmp(filter, "fake", 4) == 0);
   return fake_filter_result;
 }
+double FalsePositiveRate(void){
+  return 0;
+}
 
 int main(int argc, char** argv) {
   leveldb_t* db;
@@ -335,7 +338,7 @@ int main(int argc, char** argv) {
     leveldb_filterpolicy_t* policy;
     if (run == 0) {
       policy = leveldb_filterpolicy_create(
-          NULL, FilterDestroy, FilterCreate, FilterKeyMatch, FilterName);
+          NULL, FilterDestroy, FilterCreate, FilterKeyMatch, FilterName, FalsePositiveRate);
     } else {
       policy = leveldb_filterpolicy_create_bloom(10);
     }

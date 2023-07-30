@@ -41,14 +41,16 @@ class LEVELDB_EXPORT FilterPolicy {
   // Warning: do not change the initial contents of *dst.  Instead,
   // append the newly constructed filter to *dst.
   virtual void CreateFilter(const Slice* keys, int n,
-                            std::string* dst) const = 0;
+                            std::string* dst, int index) const = 0;
 
   // "filter" contains the data appended by a preceding call to
   // CreateFilter() on this class.  This method must return true if
   // the key was in the list of keys passed to CreateFilter().
   // This method may return true or false if the key was not on the
   // list, but it should aim to return false with a high probability.
-  virtual bool KeyMayMatch(const Slice& key, const Slice& filter) const = 0;
+  virtual bool KeyMayMatch(const Slice& key, const Slice& filter, int index) const = 0;
+
+  virtual double FalsePositiveRate() const = 0;
 };
 
 // Return a new filter policy that uses a bloom filter with approximately

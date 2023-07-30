@@ -1,246 +1,217 @@
-LevelDB is a fast key-value storage library written at Google that provides an ordered mapping from string keys to string values.
-
-> **This repository is receiving very limited maintenance. We will only review the following types of changes.**
->
-> * Fixes for critical bugs, such as data loss or memory corruption
-> * Changes absolutely needed by internally supported leveldb clients. These typically fix breakage introduced by a language/standard library/OS update
-
+# ElasticBF
 [![ci](https://github.com/google/leveldb/actions/workflows/build.yml/badge.svg)](https://github.com/google/leveldb/actions/workflows/build.yml)
 
-Authors: Sanjay Ghemawat (sanjay@google.com) and Jeff Dean (jeff@google.com)
+**[ElasticBF][1]** moves cold SSTable's bloom filter to hot SSTable's bloom filter to reduce extra disk io overhead without increasing memory overhead. Short introduction by paper's author can be saw in this [video](https://www.youtube.com/watch?v=8UBx3GCep3A). In addition to that, we also ensure code quality by utilizing **unit test**, **google sanitizers**, and **GitHub Actions** with support for multiple operating systems and compilers. Comparing changes with LevelDB just see [``this place``](https://github.com/google/leveldb/compare/main...WangTingZheng:Paperdb:elasticbf-dev?expand=1).
 
 # Features
+![The architecture of ElasticBF](https://github.com/WangTingZheng/Paperdb/assets/32613835/cb3278c6-9782-48b1-bda4-2051713a6a97)
 
-  * Keys and values are arbitrary byte arrays.
-  * Data is stored sorted by key.
-  * Callers can provide a custom comparison function to override the sort order.
-  * The basic operations are `Put(key,value)`, `Get(key)`, `Delete(key)`.
-  * Multiple changes can be made in one atomic batch.
-  * Users can create a transient snapshot to get a consistent view of data.
-  * Forward and backward iteration is supported over the data.
-  * Data is automatically compressed using the [Snappy compression library](https://google.github.io/snappy/), but [Zstd compression](https://facebook.github.io/zstd/) is also supported.
-  * External activity (file system operations etc.) is relayed through a virtual interface so users can customize the operating system interactions.
+* Fine-grained Bloom Filter Allocation
+* Hotness Identification
+* Bloom Filter Management in Memory
 
-# Documentation
+> More details see in [doc/elasticbf.md](./doc/elasticbf.md), Chinese version see in [feishu](https://o444bvn7jh.feishu.cn/docx/XlBldwKc2oOTGMxPpLlckKLunvd), If you are interested in gaining a deeper understanding of the paper, please do not hesitate to contact me. I have added **``extensive annotations``** to the original paper, and I have recorded **``8 hours``** of lecture videos to elaborate on my interpretation of the paper.
 
-  [LevelDB library documentation](https://github.com/google/leveldb/blob/main/doc/index.md) is online and bundled with the source code.
 
-# Limitations
+# Main changed files
 
-  * This is not a SQL database.  It does not have a relational data model, it does not support SQL queries, and it has no support for indexes.
-  * Only a single process (possibly multi-threaded) can access a particular database at a time.
-  * There is no client-server support builtin to the library.  An application that needs such support will have to wrap their own server around the library.
+* **util/bloom.cc**: Generate and read multi filter units' bitmap for a scope of keys **(97% lines unit test coverage)**
+* **table/filterblock.cc**: Manage multi filter units in disk, update the hotness of the SSTable. **(94% lines unit test coverage)**
+* **table/table.cc**: Check if the key is existed using filterblock **(97% lines unit test coverage)**
+* **table/table_builder.cc**: Construct filter block **(89% lines unit test coverage)**
+* **util/multi_queue.cc**: Manage filter units in memory to reduce adjust overhead **(98% lines unit test coverage)**
+* **util/condvar_signal.h** : A wrapper for signal all threads waiting for using filterblock reader by condvar using RAII, similar to unique_ptr
 
-# Getting the Source
+# Performance
 
-```bash
-git clone --recurse-submodules https://github.com/google/leveldb.git
-```
+Todo
+
+---
+# ToDo in ElasticBF
+- ~~Using multi thread to speed up filter units loading in multi queue, see [about implementing multi threads](https://github.com/WangTingZheng/Paperdb/discussions/14).~~
+- Using shared hash in this [paper][3] to reduce multi bloom filter look up overhead.
+- Hotness inheritance after compaction in [ATC version of paper][4], see [about implementing hotness inheritance](https://github.com/WangTingZheng/Paperdb/discussions/13) in discussions.
+- ~~Using [perf][8] tool to find code can be optimized.~~
+- Reimplement ElasticBF to get rid of the unit test, sanitizers and benchmark, see [about reimplementing](https://github.com/WangTingZheng/Paperdb/discussions/15)
+- ~~Support YCSB, should pay attention to [FalsePositiveRate function](https://github.com/WangTingZheng/Paperdb/blob/242b1b92cf97453d7750ea6f630cb490bb14feb7/db/c.cc#L140) in db/c.cc~~
+- Fork a [YCSB-CPP](https://github.com/ls4154/YCSB-cpp) to fit ElasticBF
+
+# Next Paper
+
+Next paper to implement maybe [AC-Key][5] or [HotRing][6] or [WiscKey][7], see [some ideas about implementing Wisckey](https://github.com/WangTingZheng/Paperdb/discussions/12). For Hotring, there is a [hashtable](https://github.com/facebook/rocksdb/tree/main/utilities/persistent_cache) in RocksDB with unit test and benchmark, we can modified it to implement Hotring. One more thing, The Skiplist maybe replaced by [ART(adaptive radix tree)][9].
+
+
+---
 
 # Building
 
-This project supports [CMake](https://cmake.org/) out of the box.
+Get the source from github, elasticbf's code is in elasticbf-dev branch:
+```shell
+git clone --recurse-submodules https://github.com/WangTingZheng/Paperdb.git
+cd Paperdb
+git checkout elasticbf-dev
+```
 
-### Build for POSIX
+This project supports [CMake](https://cmake.org/) out of the box. Quick build:
 
-Quick start:
-
-```bash
+```shell
 mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release .. && cmake --build .
 ```
 
-### Building for Windows
+# Bloom filter adjustment logging
 
-First generate the Visual Studio 2017 project/solution files:
+Turn on logging by passing parameter in cmake command:
 
-```cmd
-mkdir build
+```shell
+cmake -DCMAKE_BUILD_TYPE=Debug -DUSE_ADJUSTMENT_LOGGING=ON .. && cmake --build .
+```
+or in release mod:
+
+```shell
+cmake -DCMAKE_BUILD_TYPE=Release -DUSE_ADJUSTMENT_LOGGING=ON .. && cmake --build .
+```
+
+You can check out adjustment information in ``/LOG`` file in your db dictionary, in ``/tmp`` in default setting:
+```shell
+cd /your/db/dictionary
+cat LOG | grep "Adjustment:"
+```
+**Note1**: You must delete cmake cache file(such as cmake-build-debug) before switching ```USE_ADJUSTMENT_LOGGING``` parameters' value
+
+**Note2**: When db is destroyed, We will log sum of adjustment time.
+
+# Unit test and benchmark
+
+## unit test:
+```shell
 cd build
-cmake -G "Visual Studio 15" ..
+./leveldb_tests
+./env_posix_test
+./c_test
 ```
-The default default will build for x86. For 64-bit run:
-
-```cmd
-cmake -G "Visual Studio 15 Win64" ..
-```
-
-To compile the Windows solution from the command-line:
-
-```cmd
-devenv /build Debug leveldb.sln
+Only run one test:
+```shell
+./leveldb_tests --gtest_filter=DBTest.BloomFilter
 ```
 
-or open leveldb.sln in Visual Studio and build from within.
+## benchmark
+```shell
+cd build
+./db_bench
+```
 
-Please see the CMake documentation and `CMakeLists.txt` for more advanced usage.
+## benchmark parameters:
 
-# Contributing to the leveldb Project
+close multi_queue, use default way to get filter 
+```shell
+./db_bench --multi_queue_open=0
+```
+close info printing in FinishedSingleOp
+```shell
+./db_bench --print_process=0
+```
+**Note**: We disable FinishedSingleOp printf in CI to track error easier.
 
-> **This repository is receiving very limited maintenance. We will only review the following types of changes.**
->
-> * Bug fixes
-> * Changes absolutely needed by internally supported leveldb clients. These typically fix breakage introduced by a language/standard library/OS update
+## benchmark bash shell
+we use a bash shell to wrapper benchmark command, when run benchmark through benchmark.sh, you can pass in your own dictionary, pass ``write`` to bash will run fillrandom benchmark:
+```shell
+./benchmark.sh --model=write --db_path=/your/db/path
+```
 
-The leveldb project welcomes contributions. leveldb's primary goal is to be
-a reliable and fast key/value store. Changes that are in line with the
-features/limitations outlined above, and meet the requirements below,
-will be considered.
+If you want to use default dictionary, just run:
+```shell
+./benchmark.sh --model=write
+```
+pass ``read`` to bash will run readrandom benchmark:
 
-Contribution requirements:
+```shell
+./benchmark.sh --model=read
+```
+pass ``clean`` to bash will run destroy db, file will be deleted:
+```shell
+./benchamrk.sh --model=clean
+```
+pass ``all`` to bash wll run fillrandom and readrandom together
+```shell
+./benchmark.sh --model=all
+```
+## benchmark setup
 
-1. **Tested platforms only**. We _generally_ will only accept changes for
-   platforms that are compiled and tested. This means POSIX (for Linux and
-   macOS) or Windows. Very small changes will sometimes be accepted, but
-   consider that more of an exception than the rule.
+### Hardware
 
-2. **Stable API**. We strive very hard to maintain a stable API. Changes that
-   require changes for projects using leveldb _might_ be rejected without
-   sufficient benefit to the project.
+* CPU:        32 * 13th Gen Intel(R) Core(TM) i9-13900K
+* CPUCache:   36864 KB
+* SSD:        Samsung SSD 870(4TB)
 
-3. **Tests**: All changes must be accompanied by a new (or changed) test, or
-   a sufficient explanation as to why a new (or changed) test is not required.
+### parameters
+* 100GB kv in database
+* 10 million point lookup
+* 4 bits per key in one filter unit
+* 6 filter units for one SSTable
+* Load 2 filters at the beginning
+* 1KB KV
+* On release model
+* Snappy compression is not enabled
 
-4. **Consistent Style**: This project conforms to the
-   [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
-   To ensure your changes are properly formatted please run:
+# Google sanitizers
 
-   ```
-   clang-format -i --style=file <file>
-   ```
+Sanitizers only support of Debug mod, and you must turn it on by yourself:
+```shell
+cmake -DCMAKE_BUILD_TYPE=Debug -DUSE_SAN_ADD=ON .. && cmake --build .
+```
+use this to open thread sanitizers:
+```shell
+-DUSE_SAN_THR=ON
+```
 
-We are unlikely to accept contributions to the build configuration files, such
-as `CMakeLists.txt`. We are focused on maintaining a build configuration that
-allows us to test that the project works in a few supported configurations
-inside Google. We are not currently interested in supporting other requirements,
-such as different operating systems, compilers, or build systems.
+use this to open undefined behaviour sanitizers
+```shell
+-DUSE_SAN_UB=ON
+```
+Why google sanitizers? [Google sanitizers is faster more than 10x with vaigrind][2].
 
-## Submitting a Pull Request
+**Note**: Do not open Address and thread sanitizers together.
 
-Before any pull request will be accepted the author must first sign a
-Contributor License Agreement (CLA) at https://cla.developers.google.com/.
+**Note:** We open it by default in order to check memory leak in CI.
 
-In order to keep the commit timeline linear
-[squash](https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History#Squashing-Commits)
-your changes down to a single commit and [rebase](https://git-scm.com/docs/git-rebase)
-on google/leveldb/main. This keeps the commit timeline linear and more easily sync'ed
-with the internal repository at Google. More information at GitHub's
-[About Git rebase](https://help.github.com/articles/about-git-rebase/) page.
+# CI in Github Action
 
-# Performance
+We use github action to test code in different os, compiler and build type(Debug and Release), those jobs will be run in CI, all jobs will be checked by address sanitizers:
+- Run Tests: Run all test, include leveldb_tests, env_posix_test and c_test
+- Run LevelDB Benchmarks: benchmark in ```benchmarks/db_bench.cc```
+- Run SQLite Benchmarks: benchmark in ```benchamrks/db_bench_sqlite3.cc```
+- Run Kyoto Cabinet Benchmarks in ```benchmarks/db_bench_tree_db.cc```
 
-Here is a performance report (with explanations) from the run of the
-included db_bench program.  The results are somewhat noisy, but should
-be enough to get a ballpark performance estimate.
+We also use thread sanitizers to check the code for the jobs mentioned above in linux debug model:
 
-## Setup
+- Run Tests with thread sanitizer
+- Run LevelDB Benchmarks with thread sanitizer
+---
+# Related PR to LevelDB
 
-We use a database with a million entries.  Each entry has a 16 byte
-key, and a 100 byte value.  Values used by the benchmark compress to
-about half their original size.
+I created two pr to LevelDB during implementing ElasticBF:
 
-    LevelDB:    version 1.1
-    Date:       Sun May  1 12:11:26 2011
-    CPU:        4 x Intel(R) Core(TM)2 Quad CPU    Q6600  @ 2.40GHz
-    CPUCache:   4096 KB
-    Keys:       16 bytes each
-    Values:     100 bytes each (50 bytes after compression)
-    Entries:    1000000
-    Raw Size:   110.6 MB (estimated)
-    File Size:  62.9 MB (estimated)
+- [[**Not merged yet**] Add a flag to close FinishedSignleOp printf in CI #1131](https://github.com/google/leveldb/pull/1131)
+- [[**Not merged yet**] fix memory leak in kyoto cabinet benchmarks #1128](https://github.com/google/leveldb/pull/1128)
+- [[**Not merged yet**] fix nullptr ub in hash function #1136](https://github.com/google/leveldb/pull/1136)
 
-## Write performance
+**Note:** Unfortunately, LevelDB is receiving very limited maintenance, so, those pr may not be merged.
 
-The "fill" benchmarks create a brand new database, in either
-sequential, or random order.  The "fillsync" benchmark flushes data
-from the operating system to the disk after every operation; the other
-write operations leave the data sitting in the operating system buffer
-cache for a while.  The "overwrite" benchmark does random writes that
-update existing keys in the database.
+[1]: https://www.usenix.org/conference/hotstorage18/presentation/zhang "Zhang Y, Li Y, Guo F, et al. ElasticBF: Fine-grained and Elastic Bloom Filter Towards Efficient Read for LSM-tree-based KV Stores[C]//HotStorage. 2018."
 
-    fillseq      :       1.765 micros/op;   62.7 MB/s
-    fillsync     :     268.409 micros/op;    0.4 MB/s (10000 ops)
-    fillrandom   :       2.460 micros/op;   45.0 MB/s
-    overwrite    :       2.380 micros/op;   46.5 MB/s
+[2]: https://www.bilibili.com/video/BV1YT411Q7BU "王留帅、徐明杰-Sanitizer 在字节跳动 C C++ 业务中的实践.BiliBili. 2023."
 
-Each "op" above corresponds to a write of a single key/value pair.
-I.e., a random write benchmark goes at approximately 400,000 writes per second.
+[3]: https://dl.acm.org/doi/10.1145/3465998.3466002 "Zhu Z, Mun J H, Raman A, et al. Reducing bloom filter cpu overhead in lsm-trees on modern storage devices[C]//Proceedings of the 17th International Workshop on Data Management on New Hardware (DaMoN 2021). 2021: 1-10."
 
-Each "fillsync" operation costs much less (0.3 millisecond)
-than a disk seek (typically 10 milliseconds).  We suspect that this is
-because the hard disk itself is buffering the update in its memory and
-responding before the data has been written to the platter.  This may
-or may not be safe based on whether or not the hard disk has enough
-power to save its memory in the event of a power failure.
+[4]: https://www.usenix.org/conference/atc19/presentation/li-yongkun "Li Y, Tian C, Guo F, et al. ElasticBF: Elastic Bloom Filter with Hotness Awareness for Boosting Read Performance in Large Key-Value Stores[C]//USENIX Annual Technical Conference. 2019: 739-752."
 
-## Read performance
+[5]: https://www.usenix.org/conference/atc20/presentation/wu-fenggang "Wu F, Yang M H, Zhang B, et al. AC-key: Adaptive caching for LSM-based key-value stores[C]//Proceedings of the 2020 USENIX Conference on Usenix Annual Technical Conference. 2020: 603-615."
 
-We list the performance of reading sequentially in both the forward
-and reverse direction, and also the performance of a random lookup.
-Note that the database created by the benchmark is quite small.
-Therefore the report characterizes the performance of leveldb when the
-working set fits in memory.  The cost of reading a piece of data that
-is not present in the operating system buffer cache will be dominated
-by the one or two disk seeks needed to fetch the data from disk.
-Write performance will be mostly unaffected by whether or not the
-working set fits in memory.
+[6]: https://www.usenix.org/conference/fast20/presentation/chen-jiqiang "Chen J, Chen L, Wang S, et al. HotRing: A Hotspot-Aware In-Memory Key-Value Store[C]//FAST. 2020: 239-252."
 
-    readrandom  : 16.677 micros/op;  (approximately 60,000 reads per second)
-    readseq     :  0.476 micros/op;  232.3 MB/s
-    readreverse :  0.724 micros/op;  152.9 MB/s
+[7]: https://dl.acm.org/doi/10.1145/3033273 "Lu L, Pillai T S, Gopalakrishnan H, et al. Wisckey: Separating keys from values in ssd-conscious storage[J]. ACM Transactions on Storage (TOS), 2017, 13(1): 1-28."
 
-LevelDB compacts its underlying storage data in the background to
-improve read performance.  The results listed above were done
-immediately after a lot of random writes.  The results after
-compactions (which are usually triggered automatically) are better.
+[8]: https://zhuanlan.zhihu.com/p/639996512 "Ash1n2. 差分火焰图，让你的代码优化验证事半功倍. Zhihu. 2023."
 
-    readrandom  : 11.602 micros/op;  (approximately 85,000 reads per second)
-    readseq     :  0.423 micros/op;  261.8 MB/s
-    readreverse :  0.663 micros/op;  166.9 MB/s
-
-Some of the high cost of reads comes from repeated decompression of blocks
-read from disk.  If we supply enough cache to the leveldb so it can hold the
-uncompressed blocks in memory, the read performance improves again:
-
-    readrandom  : 9.775 micros/op;  (approximately 100,000 reads per second before compaction)
-    readrandom  : 5.215 micros/op;  (approximately 190,000 reads per second after compaction)
-
-## Repository contents
-
-See [doc/index.md](doc/index.md) for more explanation. See
-[doc/impl.md](doc/impl.md) for a brief overview of the implementation.
-
-The public interface is in include/leveldb/*.h.  Callers should not include or
-rely on the details of any other header files in this package.  Those
-internal APIs may be changed without warning.
-
-Guide to header files:
-
-* **include/leveldb/db.h**: Main interface to the DB: Start here.
-
-* **include/leveldb/options.h**: Control over the behavior of an entire database,
-and also control over the behavior of individual reads and writes.
-
-* **include/leveldb/comparator.h**: Abstraction for user-specified comparison function.
-If you want just bytewise comparison of keys, you can use the default
-comparator, but clients can write their own comparator implementations if they
-want custom ordering (e.g. to handle different character encodings, etc.).
-
-* **include/leveldb/iterator.h**: Interface for iterating over data. You can get
-an iterator from a DB object.
-
-* **include/leveldb/write_batch.h**: Interface for atomically applying multiple
-updates to a database.
-
-* **include/leveldb/slice.h**: A simple module for maintaining a pointer and a
-length into some other byte array.
-
-* **include/leveldb/status.h**: Status is returned from many of the public interfaces
-and is used to report success and various kinds of errors.
-
-* **include/leveldb/env.h**:
-Abstraction of the OS environment.  A posix implementation of this interface is
-in util/env_posix.cc.
-
-* **include/leveldb/table.h, include/leveldb/table_builder.h**: Lower-level modules that most
-clients probably won't use directly.
+[9]: https://ieeexplore.ieee.org/abstract/document/6544812/. "Leis V, Kemper A, Neumann T. The adaptive radix tree: ARTful indexing for main-memory databases[C]//2013 IEEE 29th International Conference on Data Engineering (ICDE). IEEE, 2013: 38-49."

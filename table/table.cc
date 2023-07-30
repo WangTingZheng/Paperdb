@@ -7,37 +7,64 @@
 #include "leveldb/cache.h"
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
-#include "leveldb/filter_policy.h"
+#include "leveldb/multi_queue.h"
 #include "leveldb/options.h"
+
 #include "table/block.h"
-#include "table/filter_block.h"
-#include "table/format.h"
 #include "table/two_level_iterator.h"
-#include "util/coding.h"
 
 namespace leveldb {
-
 struct Table::Rep {
   ~Rep() {
-    delete filter;
-    delete[] filter_data;
     delete index_block;
+    delete reader;
+    MultiQueue* multi_queue = options.multi_queue;
+    if (multi_queue && handle) {
+      // release for this table
+      // save sequence and hotness in multi queue
+      // just evict all filter units
+      multi_queue->Release(handle);
+      handle = nullptr;
+    }
   }
 
   Options options;
   Status status;
   RandomAccessFile* file;
-  uint64_t cache_id;
-  FilterBlockReader* filter;
-  const char* filter_data;
-
+  uint64_t block_cache_id;
+  uint64_t table_id;
+  Footer footer;
   BlockHandle metaindex_handle;  // Handle to metaindex_block: saved from footer
   Block* index_block;
+  MultiQueue::Handle* handle;
+  FilterBlockReader* reader;
+  std::string multi_cache_key;
 };
 
+std::string Table::ParseHandleKey(const Options& options,
+                                  uint64_t file_id) {
+  std::string key;
+  assert(options.filter_policy);
+  key = "filter.";
+  key.append(options.filter_policy->Name());
+  char cache_key_buffer[8];
+  EncodeFixed64(cache_key_buffer, file_id);
+  key.append(cache_key_buffer, 8);
+  return key;
+}
+
+void Table::ParseHandleKey() {
+  std::string key;
+  Options options = rep_->options;
+  if(options.filter_policy) {
+    // todo: use std::move?
+    rep_->multi_cache_key = ParseHandleKey(rep_->options, rep_->table_id);
+  }
+}
+
 Status Table::Open(const Options& options, RandomAccessFile* file,
-                   uint64_t size, Table** table) {
-  *table = nullptr;
+                   uint64_t size, Table** table, uint64_t table_id) {
+  *table = nullptr;                             //every table has unique file id
   if (size < Footer::kEncodedLength) {
     return Status::Corruption("file is too short to be an sstable");
   }
@@ -69,19 +96,25 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     rep->file = file;
     rep->metaindex_handle = footer.metaindex_handle();
     rep->index_block = index_block;
-    rep->cache_id = (options.block_cache ? options.block_cache->NewId() : 0);
-    rep->filter_data = nullptr;
-    rep->filter = nullptr;
+    rep->block_cache_id =
+        (options.block_cache ? options.block_cache->NewId() : 0);
+    rep->table_id = table_id;
+    rep->handle = nullptr;
+    rep->reader = nullptr;
+    rep->footer = footer;
     *table = new Table(rep);
-    (*table)->ReadMeta(footer);
+    (*table)->ParseHandleKey();
+    (*table)->ReadMeta();
   }
 
   return s;
 }
 
-void Table::ReadMeta(const Footer& footer) {
+// Read filter block from disk, if needed. ReadMeta maybe called
+// by ReadFilter, so, footer need saved in rep
+FilterBlockReader* Table::ReadFilter() {
   if (rep_->options.filter_policy == nullptr) {
-    return;  // Do not need any metadata
+    return nullptr;  // Do not need any metadata
   }
 
   // TODO(sanjay): Skip this if footer.metaindex_handle() size indicates
@@ -91,10 +124,12 @@ void Table::ReadMeta(const Footer& footer) {
     opt.verify_checksums = true;
   }
   BlockContents contents;
-  if (!ReadBlock(rep_->file, opt, footer.metaindex_handle(), &contents).ok()) {
+  if (!ReadBlock(rep_->file, opt, rep_->footer.metaindex_handle(), &contents)
+           .ok()) {
     // Do not propagate errors since meta info is not needed for operation
-    return;
+    return nullptr;
   }
+  FilterBlockReader* reader = nullptr;
   Block* meta = new Block(contents);
 
   Iterator* iter = meta->NewIterator(BytewiseComparator());
@@ -102,33 +137,67 @@ void Table::ReadMeta(const Footer& footer) {
   key.append(rep_->options.filter_policy->Name());
   iter->Seek(key);
   if (iter->Valid() && iter->key() == Slice(key)) {
-    ReadFilter(iter->value());
+    Slice filter_meta = iter->value();
+    size_t filter_meta_size = filter_meta.size();
+    assert(filter_meta_size >= 21);
+    // meta index block will be deleted later
+    // malloc maybe segmentation fault
+    char* filter_meta_contents = new char[filter_meta_size];
+    memcpy(filter_meta_contents, filter_meta.data(), filter_meta_size);
+    // The length must be passed in, if only a char* pointer is passed in,
+    // the length will be taken with strlen() and the string will
+    // be truncated by \0, and thus an error will occur
+    Slice filter_meta_data(filter_meta_contents, filter_meta_size);
+    reader = new FilterBlockReader(rep_->options.filter_policy,
+                                   filter_meta_data, rep_->file);
   }
   delete iter;
   delete meta;
+
+  return reader;
 }
 
-void Table::ReadFilter(const Slice& filter_handle_value) {
-  Slice v = filter_handle_value;
-  BlockHandle filter_handle;
-  if (!filter_handle.DecodeFrom(&v).ok()) {
+static void DeleteCacheFilter(const Slice& key, FilterBlockReader* value) {
+  delete value;
+}
+
+// get FilterBlockReader and saved in rep_->filter, we should return
+// cache handle and reader, so the pointer of reader passed in ReadFilter
+void Table::ReadMeta() {
+  MultiQueue* multi_queue = rep_->options.multi_queue;
+  if (rep_->options.filter_policy == nullptr || rep_->reader != nullptr
+      || rep_->handle != nullptr) {
     return;
   }
 
-  // We might want to unify with ReadBlock() if we start
-  // requiring checksum verification in Table::Open.
-  ReadOptions opt;
-  if (rep_->options.paranoid_checks) {
-    opt.verify_checksums = true;
-  }
-  BlockContents block;
-  if (!ReadBlock(rep_->file, opt, filter_handle, &block).ok()) {
+  if (multi_queue == nullptr) {
+    if (rep_->reader == nullptr) {
+      rep_->reader = ReadFilter();
+      if(rep_->reader != nullptr) {
+        rep_->reader->InitLoadFilter();
+      }
+    }
     return;
   }
-  if (block.heap_allocated) {
-    rep_->filter_data = block.data.data();  // Will need to delete later
+
+
+  // Get filter block from cache, or read from disk and insert
+  std::string filter_key = rep_->multi_cache_key;
+  Slice key(filter_key.data(), filter_key.size());
+
+  MultiQueue::Handle* handle = multi_queue->Lookup(key);
+  if (handle == nullptr) { //not in multi queue, insert
+    FilterBlockReader* reader = ReadFilter();
+    if (reader != nullptr) {
+      handle = multi_queue->Insert(key, reader, &DeleteCacheFilter);
+    }
+  } else{ // in multi queue, load filter
+    // check filter unit number
+    // prev file object will be free, update new file object
+    multi_queue->GoBackToInitFilter(handle, rep_->file);
   }
-  rep_->filter = new FilterBlockReader(rep_->options.filter_policy, block.data);
+
+  rep_->handle = handle;
 }
 
 Table::~Table() { delete rep_; }
@@ -165,9 +234,10 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
 
   if (s.ok()) {
     BlockContents contents;
+    // if cache_data_block is false, read datablock from disk everytime
     if (block_cache != nullptr) {
       char cache_key_buffer[16];
-      EncodeFixed64(cache_key_buffer, table->rep_->cache_id);
+      EncodeFixed64(cache_key_buffer, table->rep_->block_cache_id);
       EncodeFixed64(cache_key_buffer + 8, handle.offset());
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
       cache_handle = block_cache->Lookup(key);
@@ -211,6 +281,14 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
       &Table::BlockReader, const_cast<Table*>(this), options);
 }
 
+bool Table::MultiQueueKeyMayMatch(uint64_t block_offset, const Slice& key) {
+  MultiQueue* multi_queue = rep_->options.multi_queue;
+  if(multi_queue && rep_->handle) {
+    return multi_queue->UpdateHandle(rep_->handle, block_offset, key);
+  }
+  return true;
+}
+
 Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
                           void (*handle_result)(void*, const Slice&,
                                                 const Slice&)) {
@@ -219,10 +297,13 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
   iiter->Seek(k);
   if (iiter->Valid()) {
     Slice handle_value = iiter->value();
-    FilterBlockReader* filter = rep_->filter;
     BlockHandle handle;
-    if (filter != nullptr && handle.DecodeFrom(&handle_value).ok() &&
-        !filter->KeyMayMatch(handle.offset(), k)) {
+    bool is_decode_ok = handle.DecodeFrom(&handle_value).ok();
+    if (rep_->reader && is_decode_ok &&
+        !rep_->reader->KeyMayMatch(handle.offset(), k)) {
+      // Not found
+    } else if (rep_->handle != nullptr && is_decode_ok &&
+               !MultiQueueKeyMayMatch(handle.offset(), k)) {
       // Not found
     } else {
       Iterator* block_iter = BlockReader(this, options, iiter->value());
