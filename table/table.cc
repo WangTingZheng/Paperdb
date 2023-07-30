@@ -69,15 +69,19 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     return Status::Corruption("file is too short to be an sstable");
   }
 
-  char footer_space[Footer::kEncodedLength];
+  //TODO: use buffer io?
+  ReadBuffer read_buffer;
   Slice footer_input;
   Status s = file->Read(size - Footer::kEncodedLength, Footer::kEncodedLength,
-                        &footer_input, footer_space);
+                        &footer_input, &read_buffer);
+
   if (!s.ok()) return s;
 
   Footer footer;
   s = footer.DecodeFrom(&footer_input);
-  if (!s.ok()) return s;
+  if (!s.ok()) {
+    return s;
+  }
 
   // Read the index block
   BlockContents index_block_contents;
@@ -247,7 +251,7 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
           block = new Block(contents);
-          if (contents.cachable && options.fill_cache) {
+          if(contents.cachale && options.fill_cache) {
             cache_handle = block_cache->Insert(key, block, block->size(),
                                                &DeleteCachedBlock);
           }

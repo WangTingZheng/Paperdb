@@ -9,6 +9,7 @@
 #include <cstdint>
 
 #include "leveldb/iterator.h"
+#include "util/read_buffer.h"
 
 namespace leveldb {
 
@@ -34,9 +35,9 @@ class Block {
   uint32_t NumRestarts() const;
 
   const char* data_;
+  ReadBuffer* read_buffer_;
   size_t size_;
   uint32_t restart_offset_;  // Offset in data_ of restart array
-  bool owned_;               // Block owns data_[]
 };
 
 }  // namespace leveldb

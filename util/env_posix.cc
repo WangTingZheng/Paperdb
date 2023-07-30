@@ -8,11 +8,6 @@
 #ifndef __Fuchsia__
 #include <sys/resource.h>
 #endif
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
-
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -20,21 +15,29 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <limits>
 #include <queue>
 #include <set>
 #include <string>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <thread>
 #include <type_traits>
+#include <unistd.h>
 #include <utility>
 
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
 #include "leveldb/status.h"
+
 #include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/env_posix_test_helper.h"
 #include "util/posix_logger.h"
+
+#include "read_buffer.h"
 
 namespace leveldb {
 
@@ -56,7 +59,34 @@ constexpr const int kOpenBaseFlags = O_CLOEXEC;
 constexpr const int kOpenBaseFlags = 0;
 #endif  // defined(HAVE_O_CLOEXEC)
 
+#if __linux__
+constexpr const int kDirectIOFlags = O_DIRECT;
+#elif __APPLE__
+constexpr const int kDirectIOFlags = 0; // use fcntl, not open, macos has not O_DIRECT
+#endif //defined(OS_LINUX)
+
+
 constexpr const size_t kWritableFileBufferSize = 65536;
+
+size_t kAlignPageSize = 0;
+
+size_t ReturnPageSize(){
+#if __linux__ || defined(_SC_PAGESIZE)
+  long v = sysconf(_SC_PAGESIZE);
+  if (v >= 1024) {
+    return static_cast<size_t>(v);
+  }
+#endif
+  // Default assume 4KB
+  // Todo: Too big?
+  return 4U * 1024U;
+}
+
+size_t GetPageSize() {
+  if (kAlignPageSize > 0) return kAlignPageSize;
+  kAlignPageSize = ReturnPageSize();
+  return kAlignPageSize;
+}
 
 Status PosixError(const std::string& context, int error_number) {
   if (error_number == ENOENT) {
@@ -197,7 +227,7 @@ class PosixRandomAccessFile final : public RandomAccessFile {
   }
 
   Status Read(uint64_t offset, size_t n, Slice* result,
-              char* scratch) const override {
+              ReadBuffer* scratch) const override {
     int fd = fd_;
     if (!has_permanent_fd_) {
       fd = ::open(filename_.c_str(), O_RDONLY | kOpenBaseFlags);
@@ -209,8 +239,13 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
-    ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
-    *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
+
+    //creat array for read
+    char * buf = (char*)malloc(sizeof(char) * n);
+    scratch->SetPtr(buf, /*aligned=*/false);
+
+    ssize_t read_size = ::pread(fd, buf, n, static_cast<off_t>(offset));
+    *result = Slice(buf, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
       // An error: return a non-ok status.
       status = PosixError(filename_, errno);
@@ -229,6 +264,78 @@ class PosixRandomAccessFile final : public RandomAccessFile {
   Limiter* const fd_limiter_;
   const std::string filename_;
 };
+
+class PosixDirectIORandomAccessFile final : public RandomAccessFile {
+ public:
+  // The new instance takes ownership of |fd|. |fd_limiter| must outlive this
+  // instance, and will be used to determine if .
+  PosixDirectIORandomAccessFile(std::string filename, int fd, Limiter* fd_limiter)
+      : has_permanent_fd_(fd_limiter->Acquire()),
+        fd_(has_permanent_fd_ ? fd : -1),
+        fd_limiter_(fd_limiter),
+        filename_(std::move(filename)) {
+    if (!has_permanent_fd_) {
+      assert(fd_ == -1);
+      ::close(fd);  // The file will be opened on every read.
+    }
+  }
+
+  ~PosixDirectIORandomAccessFile() override {
+    if (has_permanent_fd_) {
+      assert(fd_ != -1);
+      ::close(fd_);
+      fd_limiter_->Release();
+    }
+  }
+
+  Status Read(uint64_t offset, size_t n, Slice* result,
+              ReadBuffer* scratch) const override {
+    int fd = fd_;
+    if (!has_permanent_fd_) {
+      fd = ::open(filename_.c_str(), O_RDONLY | kDirectIOFlags | kOpenBaseFlags);
+      if (fd < 0) {
+        return PosixError(filename_, errno);
+      }
+
+#if __linux__
+#elif __APPLE__ // open direct io in macos, O_DIRECT noy be supported
+      // Just see RocksDB wiki https://github.com/facebook/rocksdb/wiki/Direct-IO
+      fcntl(fd, F_NOCACHE, 1);
+#endif
+    }
+
+    assert(fd != -1);
+
+    const DirectIOAlignData data = NewAlignedData(offset, n, GetPageSize());
+
+    // data.ptr is aligned, new by posix_memalign in posix os
+    // should be freed by free()
+    scratch->SetPtr(data.ptr, /*aligned=*/true);
+    Status status;
+    ssize_t read_size = ::pread(fd, data.ptr, data.size, static_cast<off_t>(data.offset));
+
+    // return back user data
+    *result = Slice(data.ptr + data.user_offset, (read_size < 0) ? 0 : n);
+    if (read_size < 0) {
+      // An error: return a non-ok status.
+      status = PosixError(filename_, errno);
+    }
+    if (!has_permanent_fd_) {
+      // Close the temporary file descriptor opened earlier.
+      assert(fd != fd_);
+      ::close(fd);
+    }
+
+    return status;
+  }
+
+ private:
+  const bool has_permanent_fd_;  // If false, the file is opened on every read.
+  const int fd_;                 // -1 if has_permanent_fd_ is false.
+  Limiter* const fd_limiter_;
+  const std::string filename_;
+};
+
 
 // Implements random read access in a file using mmap().
 //
@@ -257,12 +364,14 @@ class PosixMmapReadableFile final : public RandomAccessFile {
   }
 
   Status Read(uint64_t offset, size_t n, Slice* result,
-              char* scratch) const override {
+              ReadBuffer* scratch) const override {
     if (offset + n > length_) {
       *result = Slice();
       return PosixError(filename_, EINVAL);
     }
 
+    // mmap manage memory by itself
+    scratch->SetPtr(nullptr, /*aligned=*/false);
     *result = Slice(mmap_base_ + offset, n);
     return Status::OK();
   }
@@ -568,6 +677,18 @@ class PosixEnv : public Env {
       mmap_limiter_.Release();
     }
     return status;
+  }
+
+  Status NewDirectIORandomAccessFile(const std::string& filename,
+                                     RandomAccessFile** result) override{
+    *result = nullptr;
+    int fd = ::open(filename.c_str(), O_RDONLY | kDirectIOFlags | kOpenBaseFlags);
+    if(fd < 0){
+      return PosixError(filename, errno);
+    }
+
+    *result = new PosixDirectIORandomAccessFile(filename, fd, &fd_limiter_);
+    return Status::OK();
   }
 
   Status NewWritableFile(const std::string& filename,

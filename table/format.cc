@@ -69,21 +69,19 @@ Status Footer::DecodeFrom(Slice* input) {
 Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
                  const BlockHandle& handle, BlockContents* result) {
   result->data = Slice();
-  result->cachable = false;
-  result->heap_allocated = false;
+  result->read_buffer = nullptr;
+  result->cachale = false;
 
   // Read the block contents as well as the type/crc footer.
   // See table_builder.cc for the code that built this structure.
   size_t n = static_cast<size_t>(handle.size());
-  char* buf = new char[n + kBlockTrailerSize];
+  ReadBuffer read_buffer;
   Slice contents;
-  Status s = file->Read(handle.offset(), n + kBlockTrailerSize, &contents, buf);
+  Status s = file->Read(handle.offset(), n + kBlockTrailerSize, &contents, &read_buffer);
   if (!s.ok()) {
-    delete[] buf;
     return s;
   }
   if (contents.size() != n + kBlockTrailerSize) {
-    delete[] buf;
     return Status::Corruption("truncated block read");
   }
 
@@ -93,7 +91,6 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
     const uint32_t crc = crc32c::Unmask(DecodeFixed32(data + n + 1));
     const uint32_t actual = crc32c::Value(data, n + 1);
     if (actual != crc) {
-      delete[] buf;
       s = Status::Corruption("block checksum mismatch");
       return s;
     }
@@ -101,60 +98,44 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
 
   switch (data[n]) {
     case kNoCompression:
-      if (data != buf) {
-        // File implementation gave us pointer to some other data.
-        // Use it directly under the assumption that it will be live
-        // while the file is open.
-        delete[] buf;
-        result->data = Slice(data, n);
-        result->heap_allocated = false;
-        result->cachable = false;  // Do not double-cache
-      } else {
-        result->data = Slice(buf, n);
-        result->heap_allocated = true;
-        result->cachable = true;
-      }
+      result->data = Slice(data, n);
+      // mmap's ptr is null, no need for cache
+      // TODO add cache unit test?
+      result->cachale = read_buffer.PtrIsNotNull();
+      // use move semantics to move buffer
+      result->read_buffer = new ReadBuffer(std::move(read_buffer));
 
       // Ok
-      break;
+      break; //TODO test compression?
     case kSnappyCompression: {
       size_t ulength = 0;
       if (!port::Snappy_GetUncompressedLength(data, n, &ulength)) {
-        delete[] buf;
         return Status::Corruption("corrupted snappy compressed block length");
       }
-      char* ubuf = new char[ulength];
+      char* ubuf = (char *)malloc(sizeof(char) * ulength);
       if (!port::Snappy_Uncompress(data, n, ubuf)) {
-        delete[] buf;
-        delete[] ubuf;
+        free(ubuf);
         return Status::Corruption("corrupted snappy compressed block contents");
       }
-      delete[] buf;
       result->data = Slice(ubuf, ulength);
-      result->heap_allocated = true;
-      result->cachable = true;
+      result->read_buffer =  new ReadBuffer(ubuf, /*aligned=*/false);
       break;
     }
     case kZstdCompression: {
       size_t ulength = 0;
       if (!port::Zstd_GetUncompressedLength(data, n, &ulength)) {
-        delete[] buf;
         return Status::Corruption("corrupted zstd compressed block length");
       }
-      char* ubuf = new char[ulength];
+      char* ubuf = (char *)malloc(sizeof(char) * ulength);
       if (!port::Zstd_Uncompress(data, n, ubuf)) {
-        delete[] buf;
-        delete[] ubuf;
+        free(ubuf);
         return Status::Corruption("corrupted zstd compressed block contents");
       }
-      delete[] buf;
       result->data = Slice(ubuf, ulength);
-      result->heap_allocated = true;
-      result->cachable = true;
+      result->read_buffer = new ReadBuffer(ubuf, /*aligned=*/false);
       break;
     }
     default:
-      delete[] buf;
       return Status::Corruption("bad block type");
   }
 

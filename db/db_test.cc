@@ -118,6 +118,19 @@ class DBTest : public testing::Test {
       case kMultiQueue:
         options.filter_policy = filter_policy_;
         break;
+      case kDirectIO:
+        options.using_direct_io = true;
+        break;
+      case kDirectIOForFilter:
+        options.using_direct_io = true;
+        options.filter_policy = filter_policy_;
+        options.bloom_filter_adjustment = false;
+        break ;
+      case KDirectIOForMQ:
+        options.using_direct_io = true;
+        options.filter_policy = filter_policy_;
+        options.bloom_filter_adjustment = true;
+        break;
       default:
         break;
     }
@@ -374,7 +387,8 @@ class DBTest : public testing::Test {
 
  private:
   // Sequence of option configurations to try
-  enum OptionConfig { kDefault, kReuse, kFilter, kUncompressed, kMultiQueue, kEnd };
+  enum OptionConfig { kDefault, kReuse, kFilter, kUncompressed, kMultiQueue,
+                      kDirectIO, kDirectIOForFilter, KDirectIOForMQ, kEnd };
 
   const FilterPolicy* filter_policy_;
   int option_config_;

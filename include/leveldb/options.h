@@ -62,6 +62,8 @@ struct LEVELDB_EXPORT Options {
 
   bool bloom_filter_adjustment = true;
 
+  bool using_direct_io = false;
+
   // Use the specified object to interact with the environment,
   // e.g. to read/write files, schedule background work, etc.
   // Default: Env::Default()
