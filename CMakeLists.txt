@@ -210,8 +210,6 @@ target_sources(leveldb
     "util/hash.h"
     "util/logging.cc"
     "util/logging.h"
-    "util/mq_schedule.cc"
-    "util/mq_schedule.h"
     "util/multi_queue.cc"
     "util/mutexlock.h"
     "util/condvar_signal.h"
@@ -355,7 +353,6 @@ if(LEVELDB_BUILD_TESTS)
       # "util/env_test.cc"
       # will cause bug in other unit test use MQSchedule
       # "util/condvar_signal_test.cc"
-      # "util/mq_schedule_test.cc"
       "util/status_test.cc"
       "util/no_destructor_test.cc"
       "util/testutil.cc"

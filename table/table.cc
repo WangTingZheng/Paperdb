@@ -12,7 +12,6 @@
 
 #include "table/block.h"
 #include "table/two_level_iterator.h"
-#include "util/mq_schedule.h"
 
 namespace leveldb {
 struct Table::Rep {
