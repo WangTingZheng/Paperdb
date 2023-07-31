@@ -11,13 +11,11 @@
 #include "leveldb/slice.h"
 #include "leveldb/status.h"
 #include "leveldb/table_builder.h"
-#include "util/read_buffer.h"
 
 namespace leveldb {
 
 class Block;
 class RandomAccessFile;
-class DirectIORandomAccessFile;
 struct ReadOptions;
 
 // BlockHandle is a pointer to the extent of a file that stores a data
@@ -82,8 +80,8 @@ static const size_t kBlockTrailerSize = 5;
 
 struct BlockContents {
   Slice data;           // Actual contents of data
-  ReadBuffer *read_buffer; // the memory allocated by direct io
-  bool cachale;
+  bool cachable;        // True iff data can be cached
+  bool heap_allocated;  // True iff caller should delete[] data.data()
 };
 
 // Read the block identified by "handle" from "file".  On failure

@@ -145,7 +145,8 @@ class BlockConstructor : public Constructor {
     data_ = builder.Finish().ToString();
     BlockContents contents;
     contents.data = data_;
-    contents.read_buffer = nullptr;
+    contents.cachable = false;
+    contents.heap_allocated = false;
     block_ = new Block(contents);
     return Status::OK();
   }
@@ -581,8 +582,8 @@ TEST_F(Harness, ZeroRestartPointsInBlock) {
   memset(data, 0, sizeof(data));
   BlockContents contents;
   contents.data = Slice(data, sizeof(data));
-  // data will be free in calller, not block
-  contents.read_buffer = nullptr;
+  contents.cachable = false;
+  contents.heap_allocated = false;
   Block block(contents);
   Iterator* iter = block.NewIterator(BytewiseComparator());
   iter->SeekToFirst();

@@ -32,7 +32,6 @@
 #include "util/logging.h"
 #include "util/mutexlock.h"
 #include "util/windows_logger.h"
-#include "util/read_buffer.h"
 
 namespace leveldb {
 
@@ -45,29 +44,6 @@ constexpr int kDefaultMmapLimit = (sizeof(void*) >= 8) ? 1000 : 0;
 
 // Can be set by by EnvWindowsTestHelper::SetReadOnlyMMapLimit().
 int g_mmap_limit = kDefaultMmapLimit;
-
-size_t kAlignPageSize = 0;
-
-size_t ReturnPageSize() {
-  SYSTEM_INFO sinfo;
-  GetSystemInfo(&sinfo);
-
-  return sinfo.dwPageSize;
-}
-
-size_t GetPageSize() {
-  if (kAlignPageSize > 0) return kAlignPageSize;
-  kAlignPageSize = ReturnPageSize();
-  return kAlignPageSize;
-}
-
-inline bool WindowsIsAligned(uint64_t val){
-  return IsAligned(val, GetPageSize());
-}
-
-inline bool WindowsIsAligned(const char* ptr){
-  return IsAligned(ptr, GetPageSize());
-}
 
 std::string GetWindowsErrorMessage(DWORD error_code) {
   std::string message;
@@ -230,62 +206,22 @@ class WindowsRandomAccessFile : public RandomAccessFile {
   ~WindowsRandomAccessFile() override = default;
 
   Status Read(uint64_t offset, size_t n, Slice* result,
-              ReadBuffer* scratch) const override {
+              char* scratch) const override {
     DWORD bytes_read = 0;
     OVERLAPPED overlapped = {0};
 
     overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32);
     overlapped.Offset = static_cast<DWORD>(offset);
-
-    char* buf = (char*)malloc(sizeof(char) * n);
-    scratch->SetPtr(buf, /*aligned=*/false);
-    if (!::ReadFile(handle_.get(), buf, static_cast<DWORD>(n), &bytes_read,
+    if (!::ReadFile(handle_.get(), scratch, static_cast<DWORD>(n), &bytes_read,
                     &overlapped)) {
       DWORD error_code = ::GetLastError();
       if (error_code != ERROR_HANDLE_EOF) {
-        *result = Slice(buf, 0);
+        *result = Slice(scratch, 0);
         return Status::IOError(filename_, GetWindowsErrorMessage(error_code));
       }
     }
 
-    *result = Slice(buf, bytes_read);
-    return Status::OK();
-  }
-
- private:
-  const ScopedHandle handle_;
-  const std::string filename_;
-};
-
-class WindowsDirectIORandomAccessFile : public RandomAccessFile {
- public:
-  WindowsDirectIORandomAccessFile(std::string filename, ScopedHandle handle)
-      : handle_(std::move(handle)), filename_(std::move(filename)) {}
-
-  ~WindowsDirectIORandomAccessFile() override = default;
-
-  Status Read(uint64_t offset, size_t n, Slice* result,
-              ReadBuffer* scratch) const override {
-    DWORD bytes_read = 0;
-    OVERLAPPED overlapped = {0};
-
-    const DirectIOAlignData data = NewAlignedData(offset, n, GetPageSize());
-
-    overlapped.OffsetHigh = static_cast<DWORD>(data.offset >> 32);
-    overlapped.Offset = static_cast<DWORD>(data.offset);
-
-    scratch->SetPtr(data.ptr, /*aligned=*/true);
-
-    if (!::ReadFile(handle_.get(), data.ptr, static_cast<DWORD>(data.size),
-                    &bytes_read, &overlapped)) {
-      DWORD error_code = ::GetLastError();
-      if (error_code != ERROR_HANDLE_EOF) {
-        *result = Slice(data.ptr + data.user_offset, 0);
-        return Status::IOError(filename_, GetWindowsErrorMessage(error_code));
-      }
-    }
-
-    *result = Slice(data.ptr + data.user_offset, n);
+    *result = Slice(scratch, bytes_read);
     return Status::OK();
   }
 
@@ -310,13 +246,12 @@ class WindowsMmapReadableFile : public RandomAccessFile {
   }
 
   Status Read(uint64_t offset, size_t n, Slice* result,
-              ReadBuffer* scratch) const override {
+              char* scratch) const override {
     if (offset + n > length_) {
       *result = Slice();
       return WindowsError(filename_, ERROR_INVALID_PARAMETER);
     }
 
-    scratch->SetPtr(nullptr, /*aligned=*/false);
     *result = Slice(mmap_base_ + offset, n);
     return Status::OK();
   }
@@ -517,25 +452,6 @@ class WindowsEnv : public Env {
     }
     mmap_limiter_.Release();
     return WindowsError(filename, ::GetLastError());
-  }
-
-  Status NewDirectIORandomAccessFile(const std::string& filename,
-                                     RandomAccessFile** result) override{
-    *result = nullptr;
-    DWORD desired_access = GENERIC_READ;
-    DWORD share_mode = FILE_SHARE_READ;
-    ScopedHandle handle =
-        ::CreateFileA(filename.c_str(), desired_access, share_mode,
-                      /*lpSecurityAttributes=*/nullptr,
-                      OPEN_EXISTING,
-                      FILE_ATTRIBUTE_READONLY | FILE_FLAG_NO_BUFFERING,
-                      /*hTemplateFile=*/nullptr);
-    if (!handle.is_valid()) {
-      return WindowsError(filename, ::GetLastError());
-    }
-
-    *result = new WindowsDirectIORandomAccessFile(filename, std::move(handle));
-    return Status::OK();
   }
 
   Status NewWritableFile(const std::string& filename,
