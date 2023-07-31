@@ -24,7 +24,6 @@
 * **table/table_builder.cc**: Construct filter block **(89% lines unit test coverage)**
 * **util/multi_queue.cc**: Manage filter units in memory to reduce adjust overhead **(98% lines unit test coverage)**
 * **util/condvar_signal.h** : A wrapper for signal all threads waiting for using filterblock reader by condvar using RAII, similar to unique_ptr
-* **util/read_buffer.h**: A RAII style class for manage allocated string in read function in RandomAccessFile
 
 # Performance
 
@@ -38,8 +37,7 @@ Todo
 - ~~Using [perf][8] tool to find code can be optimized.~~
 - Reimplement ElasticBF to get rid of the unit test, sanitizers and benchmark, see [about reimplementing](https://github.com/WangTingZheng/Paperdb/discussions/15)
 - ~~Support YCSB, should pay attention to [FalsePositiveRate function](https://github.com/WangTingZheng/Paperdb/blob/242b1b92cf97453d7750ea6f630cb490bb14feb7/db/c.cc#L140) in db/c.cc~~
-- ~~Fork a [YCSB-CPP](https://github.com/ls4154/YCSB-cpp) to fit ElasticBF~~, Just see my [YCSB](https://github.com/WangTingZheng/YCSB-cpp)
-- More ToDo, please see [Github project](https://github.com/users/WangTingZheng/projects/17/views/1)
+- Fork a [YCSB-CPP](https://github.com/ls4154/YCSB-cpp) to fit ElasticBF
 
 # Next Paper
 

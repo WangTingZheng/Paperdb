@@ -15,7 +15,6 @@
 #include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/mutexlock.h"
-#include "util/read_buffer.h"
 
 namespace leveldb {
 
@@ -190,10 +189,8 @@ class RandomAccessFileImpl : public RandomAccessFile {
   ~RandomAccessFileImpl() override { file_->Unref(); }
 
   Status Read(uint64_t offset, size_t n, Slice* result,
-              ReadBuffer* scratch) const override {
-    char* buf = (char*)malloc(sizeof(char) * n);
-    scratch->SetPtr(buf, /*aligned=*/false);
-    return file_->Read(offset, n, result, buf);
+              char* scratch) const override {
+    return file_->Read(offset, n, result, scratch);
   }
 
  private:
@@ -246,18 +243,6 @@ class InMemoryEnv : public EnvWrapper {
 
   Status NewRandomAccessFile(const std::string& fname,
                              RandomAccessFile** result) override {
-    MutexLock lock(&mutex_);
-    if (file_map_.find(fname) == file_map_.end()) {
-      *result = nullptr;
-      return Status::IOError(fname, "File not found");
-    }
-
-    *result = new RandomAccessFileImpl(file_map_[fname]);
-    return Status::OK();
-  }
-
-  Status NewDirectIORandomAccessFile(
-      const std::string& fname, RandomAccessFile** result) override {
     MutexLock lock(&mutex_);
     if (file_map_.find(fname) == file_map_.end()) {
       *result = nullptr;

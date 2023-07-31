@@ -221,8 +221,6 @@ target_sources(leveldb
     "util/status.cc"
     "util/file_impl.cc"
     "util/file_impl.h"
-    "util/read_buffer.h"
-    "util/read_buffer.cc"
 
   # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
   $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -388,7 +386,6 @@ if(LEVELDB_BUILD_TESTS)
         "util/crc32c_test.cc"
         "util/hash_test.cc"
         "util/logging_test.cc"
-        "util/read_buffer_test.cc"
     )
   endif(NOT BUILD_SHARED_LIBS)
   target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main)

@@ -87,7 +87,7 @@ jobs:
       working-directory: ${{ github.workspace }}/build
       run: ctest -C "${{ env.CMAKE_BUILD_TYPE }}" --verbose
 
-    - name: Run LevelDB Benchmarks with MQ
+    - name: Run LevelDB Benchmarks
       run: ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} --print_process=0 --bloom_bits=4
 
     - name: Run LevelDB Benchmarks without MQ
@@ -100,7 +100,6 @@ jobs:
         ${{ env.BINARY_PATH }}db_bench${{ env.BINARY_SUFFIX }} 
         --print_process=0 --bloom_bits=4 --use_direct_io=1 
         --benchmarks="fillrandom,readrandom,compact"
-
     - name: Run SQLite Benchmarks
       if: ${{ runner.os != 'Windows' }}
       run: ${{ env.BINARY_PATH }}db_bench_sqlite3${{ env.BINARY_SUFFIX }}

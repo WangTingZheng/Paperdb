@@ -297,6 +297,7 @@ class Stats {
   void AddMessage(Slice msg) { AppendWithSpace(&message_, msg); }
 
   void StartRecordingIO(){
+    //todo data race with compaction thread?
     SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
     env->count_random_reads_.store(true, std::memory_order_release);
     env->random_read_counter_.Reset();
@@ -839,7 +840,6 @@ class Benchmark {
     Options options;
     options.env = g_env;
     options.create_if_missing = !FLAGS_use_existing_db;
-    options.using_direct_io = FLAGS_use_direct_io;
     options.bloom_filter_adjustment = FLAGS_multi_queue_open;
     options.block_cache = cache_;
     options.write_buffer_size = FLAGS_write_buffer_size;
@@ -973,9 +973,6 @@ class Benchmark {
     std::string value;
     const int range = (FLAGS_num + 99) / 100;
     KeyBuffer key;
-    if(FLAGS_save_ios) {
-      thread->stats.StartRecordingIO();
-    }
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(range);
       key.Set(k);
@@ -1178,9 +1175,6 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--save_io=%d%c", &n, &junk) == 1 &&
            (n == 0 || n == 1)) {
       FLAGS_save_ios = n;
-    }else if (sscanf(argv[i], "--use_direct_io=%d%c", &n, &junk) == 1 &&
-               (n == 0 || n == 1)) {
-      FLAGS_use_direct_io = n;
     }else if (sscanf(argv[i], "--bloom_bits=%d%c", &n, &junk) == 1) {
       FLAGS_bloom_bits = n;
     } else if (sscanf(argv[i], "--open_files=%d%c", &n, &junk) == 1) {

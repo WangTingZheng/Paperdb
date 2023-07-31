@@ -150,7 +150,7 @@ Status DumpTable(Env* env, const std::string& fname, WritableFile* dst) {
   Table* table = nullptr;
   Status s = env->GetFileSize(fname, &file_size);
   if (s.ok()) {
-    s = env->NewDirectIORandomAccessFile(fname, &file);
+    s = env->NewRandomAccessFile(fname, &file);
   }
   if (s.ok()) {
     // We use the default comparator, which may or may not match the

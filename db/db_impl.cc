@@ -26,7 +26,6 @@
 #include "leveldb/table_builder.h"
 #include "table/block.h"
 #include "table/merger.h"
-#include "util/mq_schedule.h"
 
 namespace leveldb {
 
