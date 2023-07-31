@@ -165,7 +165,7 @@ class FilterBlockReader {
   RandomAccessFile* file_ GUARDED_BY(mutex_);
 
   std::vector<const char*> filter_units GUARDED_BY(mutex_);
-  std::vector<ReadBuffer*> reader_buffers_ GUARDED_BY(mutex_);
+  bool heap_allocated_ GUARDED_BY(mutex_);
 
   Status LoadFilterInternal();
   Status EvictFilterInternal();

@@ -44,11 +44,9 @@ namespace leveldb {
 class FileLock;
 class Logger;
 class RandomAccessFile;
-class DirectIORandomAccessFile;
 class SequentialFile;
 class Slice;
 class WritableFile;
-class ReadBuffer;
 
 class LEVELDB_EXPORT Env {
  public:
@@ -86,9 +84,6 @@ class LEVELDB_EXPORT Env {
   // The returned file may be concurrently accessed by multiple threads.
   virtual Status NewRandomAccessFile(const std::string& fname,
                                      RandomAccessFile** result) = 0;
-
-  virtual Status NewDirectIORandomAccessFile(const std::string& fname,
-                                             RandomAccessFile** result) = 0;
 
   // Create an object that writes to a new file with the specified
   // name.  Deletes any existing file with the same name and creates a
@@ -273,7 +268,7 @@ class LEVELDB_EXPORT RandomAccessFile {
   //
   // Safe for concurrent use by multiple threads.
   virtual Status Read(uint64_t offset, size_t n, Slice* result,
-                      ReadBuffer* scratch) const = 0;
+                      char* scratch) const = 0;
 };
 
 // A file abstraction for sequential writing.  The implementation
@@ -354,12 +349,6 @@ class LEVELDB_EXPORT EnvWrapper : public Env {
                              RandomAccessFile** r) override {
     return target_->NewRandomAccessFile(f, r);
   }
-
-  Status NewDirectIORandomAccessFile(const std::string& f,
-                                     RandomAccessFile** r) override {
-      return target_->NewDirectIORandomAccessFile(f, r);
-  }
-
   Status NewWritableFile(const std::string& f, WritableFile** r) override {
     return target_->NewWritableFile(f, r);
   }

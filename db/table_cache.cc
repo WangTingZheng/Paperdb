@@ -38,13 +38,6 @@ TableCache::TableCache(const std::string& dbname, const Options& options,
 
 TableCache::~TableCache() { delete cache_; }
 
-Status TableCache::NewRandomAccessFileForTable(const std::string& fname, RandomAccessFile** file){
-  if(options_.using_direct_io){
-    return env_->NewDirectIORandomAccessFile(fname, file);
-  }
-  return env_->NewRandomAccessFile(fname, file);
-}
-
 Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
                              Cache::Handle** handle) {
   Status s;
@@ -56,10 +49,10 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
     std::string fname = TableFileName(dbname_, file_number);
     RandomAccessFile* file = nullptr;
     Table* table = nullptr;
-    s = NewRandomAccessFileForTable(fname, &file);
+    s = env_->NewRandomAccessFile(fname, &file);
     if (!s.ok()) {
       std::string old_fname = SSTTableFileName(dbname_, file_number);
-      if (NewRandomAccessFileForTable(old_fname, &file).ok()) {
+      if (env_->NewRandomAccessFile(old_fname, &file).ok()) {
         s = Status::OK();
       }
     }
