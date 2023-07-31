@@ -6,12 +6,12 @@
 # Features
 ![The architecture of ElasticBF](https://github.com/WangTingZheng/Paperdb/assets/32613835/cb3278c6-9782-48b1-bda4-2051713a6a97)
 
-* [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/58)] Based feature:
+* [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/60)] Based feature:
   * Fine-grained Bloom Filter Allocation
   * Hotness Identification
   * Bloom Filter Management in Memory 
   * Background thread to loading filter
-* [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/59)] DirectIO implementation in LevelDB
+* [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/61)] DirectIO implementation in LevelDB
 
 > More details see in [doc/elasticbf.md](./doc/elasticbf.md), Chinese version see in [feishu](https://o444bvn7jh.feishu.cn/docx/XlBldwKc2oOTGMxPpLlckKLunvd), If you are interested in gaining a deeper understanding of the paper, please do not hesitate to contact me. I have added **``extensive annotations``** to the original paper, and I have recorded **``8 hours``** of lecture videos to elaborate on my interpretation of the paper.
 
