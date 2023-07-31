@@ -45,6 +45,7 @@ StringSource* FileImpl::GetSource() {
   return source_;
 }
 
+
 FileImpl::~FileImpl() {
   delete sink_;
   delete source_;
@@ -141,7 +142,7 @@ Status SpecialEnv::NewRandomAccessFile(const std::string& f, RandomAccessFile** 
         : target_(target), counter_(counter) {}
     ~CountingFile() override { delete target_; }
     Status Read(uint64_t offset, size_t n, Slice* result,
-                char* scratch) const override {
+                ReadBuffer* scratch) const override {
       counter_->Increment();
       return target_->Read(offset, n, result, scratch);
     }
@@ -150,6 +151,30 @@ Status SpecialEnv::NewRandomAccessFile(const std::string& f, RandomAccessFile** 
   Status s = target()->NewRandomAccessFile(f, r);
   if (s.ok() && count_random_reads_.load(std::memory_order_acquire)) {
     *r = new CountingFile(*r, &random_read_counter_);
+  }
+  return s;
+}
+
+Status SpecialEnv::NewDirectIORandomAccessFile(const std::string& f, RandomAccessFile** r) {
+  class DirectIOCountingFile : public RandomAccessFile {
+   private:
+    RandomAccessFile* target_;
+    AtomicCounter* counter_;
+
+   public:
+    DirectIOCountingFile(RandomAccessFile* target, AtomicCounter* counter)
+        : target_(target), counter_(counter) {}
+    ~DirectIOCountingFile() override { delete target_; }
+    Status Read(uint64_t offset, size_t n, Slice* result,
+                ReadBuffer* scratch) const override {
+      counter_->Increment();
+      return target_->Read(offset, n, result, scratch);
+    }
+  };
+
+  Status s = target()->NewDirectIORandomAccessFile(f, r);
+  if (s.ok() && count_random_reads_.load(std::memory_order_acquire)) {
+    *r = new DirectIOCountingFile(*r, &random_read_counter_);
   }
   return s;
 }

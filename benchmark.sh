@@ -51,7 +51,7 @@ mkdir build && cd build
 # the overhead is high
 cmake -DCMAKE_BUILD_TYPE=Release .. && cmake --build .
 
-benchmark="./db_bench --num=$num --print_process=0 --value_size=$value_size --reads=$reads --bloom_bits=$bloom_bits --cache_size=0"
+benchmark="./db_bench --num=$num --print_process=0 --value_size=$value_size --reads=$reads --bloom_bits=$bloom_bits --cache_size=0 --use_direct_io=1"
 
 # pass in db path
 if [[ $classify_path == true ]]; then

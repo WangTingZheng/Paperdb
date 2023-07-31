@@ -4,14 +4,17 @@
 
 #include "helpers/memenv/memenv.h"
 
+#include "db/db_impl.h"
 #include <string>
 #include <vector>
 
-#include "gtest/gtest.h"
-#include "db/db_impl.h"
 #include "leveldb/db.h"
 #include "leveldb/env.h"
+
+#include "util/read_buffer.h"
 #include "util/testutil.h"
+
+#include "gtest/gtest.h"
 
 namespace leveldb {
 
@@ -121,16 +124,17 @@ TEST_F(MemEnvTest, ReadWrite) {
   delete seq_file;
 
   // Random reads.
+  ReadBuffer read_buffer;
   ASSERT_LEVELDB_OK(env_->NewRandomAccessFile("/dir/f", &rand_file));
-  ASSERT_LEVELDB_OK(rand_file->Read(6, 5, &result, scratch));  // Read "world".
+  ASSERT_LEVELDB_OK(rand_file->Read(6, 5, &result, &read_buffer));  // Read "world".
   ASSERT_EQ(0, result.compare("world"));
-  ASSERT_LEVELDB_OK(rand_file->Read(0, 5, &result, scratch));  // Read "hello".
+  ASSERT_LEVELDB_OK(rand_file->Read(0, 5, &result, &read_buffer));  // Read "hello".
   ASSERT_EQ(0, result.compare("hello"));
-  ASSERT_LEVELDB_OK(rand_file->Read(10, 100, &result, scratch));  // Read "d".
+  ASSERT_LEVELDB_OK(rand_file->Read(10, 100, &result, &read_buffer));  // Read "d".
   ASSERT_EQ(0, result.compare("d"));
 
   // Too high offset.
-  ASSERT_TRUE(!rand_file->Read(1000, 5, &result, scratch).ok());
+  ASSERT_TRUE(!rand_file->Read(1000, 5, &result, &read_buffer).ok());
   delete rand_file;
 }
 
@@ -206,8 +210,8 @@ TEST_F(MemEnvTest, OverwriteOpenFile) {
   // Verify that overwriting an open file will result in the new file data
   // being read from files opened before the write.
   Slice result;
-  char scratch[kFileDataLen];
-  ASSERT_LEVELDB_OK(rand_file->Read(0, kFileDataLen, &result, scratch));
+  ReadBuffer read_buffer;
+  ASSERT_LEVELDB_OK(rand_file->Read(0, kFileDataLen, &result, &read_buffer));
   ASSERT_EQ(0, result.compare(kWrite2Data));
 
   delete rand_file;

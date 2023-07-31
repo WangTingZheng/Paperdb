@@ -49,7 +49,7 @@ class TableCache {
 
  private:
   Status FindTable(uint64_t file_number, uint64_t file_size, Cache::Handle**);
-
+  Status NewRandomAccessFileForTable(const std::string& fname, RandomAccessFile** file);
   Env* const env_;
   const std::string dbname_;
   const Options& options_;

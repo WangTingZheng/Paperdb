@@ -137,8 +137,6 @@ struct leveldb_filterpolicy_t : public FilterPolicy {
                          filter.size());
   }
 
-  // todo: false positive rate is useless for this filter?
-  // maybe ycsb will use it
   double  FalsePositiveRate() const override { return false_positive_rate_(); }
 
   void* state_;
