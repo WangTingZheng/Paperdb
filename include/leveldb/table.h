@@ -7,8 +7,10 @@
 
 #include <cstdint>
 
+#include "leveldb/multi_queue.h"
 #include "leveldb/export.h"
 #include "leveldb/iterator.h"
+#include "table/filter_block.h"
 
 namespace leveldb {
 
@@ -38,7 +40,7 @@ class LEVELDB_EXPORT Table {
   //
   // *file must remain live while this Table is in use.
   static Status Open(const Options& options, RandomAccessFile* file,
-                     uint64_t file_size, Table** table);
+                     uint64_t file_size, Table** table, uint64_t table_id);
 
   Table(const Table&) = delete;
   Table& operator=(const Table&) = delete;
@@ -58,6 +60,8 @@ class LEVELDB_EXPORT Table {
   // be close to the file length.
   uint64_t ApproximateOffsetOf(const Slice& key) const;
 
+  static std::string ParseHandleKey(const Options& options, uint64_t file_id);
+
  private:
   friend class TableCache;
   struct Rep;
@@ -73,10 +77,14 @@ class LEVELDB_EXPORT Table {
                      void (*handle_result)(void* arg, const Slice& k,
                                            const Slice& v));
 
-  void ReadMeta(const Footer& footer);
-  void ReadFilter(const Slice& filter_handle_value);
+  FilterBlockReader* ReadFilter();
+  void ReadMeta();
 
   Rep* const rep_;
+
+  void ParseHandleKey();
+
+  bool MultiQueueKeyMayMatch(uint64_t block_offset, const Slice& key);
 };
 
 }  // namespace leveldb

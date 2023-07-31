@@ -211,7 +211,8 @@ LEVELDB_EXPORT leveldb_filterpolicy_t* leveldb_filterpolicy_create(
                            size_t* filter_length),
     uint8_t (*key_may_match)(void*, const char* key, size_t length,
                              const char* filter, size_t filter_length),
-    const char* (*name)(void*));
+    const char* (*name)(void*),
+    double (*false_positive_rate)(void));
 LEVELDB_EXPORT void leveldb_filterpolicy_destroy(leveldb_filterpolicy_t*);
 
 LEVELDB_EXPORT leveldb_filterpolicy_t* leveldb_filterpolicy_create_bloom(

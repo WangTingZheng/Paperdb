@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cstdint>
 #include <cstdio>
 #include <set>
 #include <string>
@@ -14,10 +13,8 @@
 
 #include "db/builder.h"
 #include "db/db_iter.h"
-#include "db/dbformat.h"
 #include "db/filename.h"
 #include "db/log_reader.h"
-#include "db/log_writer.h"
 #include "db/memtable.h"
 #include "db/table_cache.h"
 #include "db/version_set.h"
@@ -27,13 +24,9 @@
 #include "leveldb/status.h"
 #include "leveldb/table.h"
 #include "leveldb/table_builder.h"
-#include "port/port.h"
 #include "table/block.h"
 #include "table/merger.h"
-#include "table/two_level_iterator.h"
-#include "util/coding.h"
-#include "util/logging.h"
-#include "util/mutexlock.h"
+#include "util/mq_schedule.h"
 
 namespace leveldb {
 
@@ -112,8 +105,14 @@ Options SanitizeOptions(const std::string& dbname,
       result.info_log = nullptr;
     }
   }
+
   if (result.block_cache == nullptr) {
     result.block_cache = NewLRUCache(8 << 20);
+  }
+
+  if(result.bloom_filter_adjustment && result.filter_policy){
+    result.multi_queue = NewMultiQueue();
+    result.multi_queue->SetLogger(result.info_log);
   }
   return result;
 }
@@ -136,6 +135,7 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
       db_lock_(nullptr),
       shutting_down_(false),
       background_work_finished_signal_(&mutex_),
+      mq_schedule_cv_(&mq_schedule_mutex_),
       mem_(nullptr),
       imm_(nullptr),
       has_imm_(false),
@@ -145,9 +145,11 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
       seed_(0),
       tmp_batch_(new WriteBatch),
       background_compaction_scheduled_(false),
+      destructor_wait_(true),
       manual_compaction_(nullptr),
       versions_(new VersionSet(dbname_, &options_, table_cache_,
-                               &internal_comparator_)) {}
+                               &internal_comparator_)) {
+}
 
 DBImpl::~DBImpl() {
   // Wait for background work to finish.
@@ -156,6 +158,7 @@ DBImpl::~DBImpl() {
   while (background_compaction_scheduled_) {
     background_work_finished_signal_.Wait();
   }
+
   mutex_.Unlock();
 
   if (db_lock_ != nullptr) {
@@ -170,11 +173,16 @@ DBImpl::~DBImpl() {
   delete logfile_;
   delete table_cache_;
 
-  if (owns_info_log_) {
-    delete options_.info_log;
-  }
   if (owns_cache_) {
     delete options_.block_cache;
+  }
+
+  delete options_.multi_queue;
+
+  // we want to log adjustment time in ~InternalMultiQueue
+  // info log must be deleted after delete multi queue
+  if (owns_info_log_) {
+    delete options_.info_log;
   }
 }
 
@@ -272,6 +280,11 @@ void DBImpl::RemoveObsoleteFiles() {
         files_to_delete.push_back(std::move(filename));
         if (type == kTableFile) {
           table_cache_->Evict(number);
+          // Delete filter block read in multi queue
+          if(options_.multi_queue){
+            std::string key = Table::ParseHandleKey(options_, number);
+            options_.multi_queue->Erase(key);
+          }
         }
         Log(options_.info_log, "Delete type=%d #%lld\n", static_cast<int>(type),
             static_cast<unsigned long long>(number));
@@ -1450,6 +1463,11 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
     if (imm_) {
       total_usage += imm_->ApproximateMemoryUsage();
     }
+    // easier to track multi_queue's memory overhead
+    if(options_.multi_queue){
+      total_usage += options_.multi_queue->TotalCharge();
+    }
+
     char buf[50];
     std::snprintf(buf, sizeof(buf), "%llu",
                   static_cast<unsigned long long>(total_usage));

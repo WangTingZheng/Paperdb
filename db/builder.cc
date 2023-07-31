@@ -75,6 +75,13 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
     // Keep it
   } else {
     env->RemoveFile(fname);
+    // delete table can not free reader
+    // erase reader by multi queue
+    table_cache->Evict(meta->number);
+    if(options.multi_queue){
+      std::string key = Table::ParseHandleKey(options, meta->number);
+      options.multi_queue->Erase(key);
+    }
   }
   return s;
 }

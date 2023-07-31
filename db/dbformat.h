@@ -124,8 +124,9 @@ class InternalFilterPolicy : public FilterPolicy {
  public:
   explicit InternalFilterPolicy(const FilterPolicy* p) : user_policy_(p) {}
   const char* Name() const override;
-  void CreateFilter(const Slice* keys, int n, std::string* dst) const override;
-  bool KeyMayMatch(const Slice& key, const Slice& filter) const override;
+  void CreateFilter(const Slice* keys, int n, std::string* dst, int index) const override;
+  bool KeyMayMatch(const Slice& key, const Slice& filter, int index) const override;
+  double FalsePositiveRate() const override;
 };
 
 // Modules in this directory should keep internal keys wrapped inside

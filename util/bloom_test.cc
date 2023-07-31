@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include "gtest/gtest.h"
 #include "leveldb/filter_policy.h"
+
 #include "util/coding.h"
 #include "util/logging.h"
 #include "util/testutil.h"
+
+#include "gtest/gtest.h"
 
 namespace leveldb {
 
@@ -20,6 +22,13 @@ static Slice Key(int i, char* buffer) {
 class BloomTest : public testing::Test {
  public:
   BloomTest() : policy_(NewBloomFilterPolicy(10)) {}
+
+  // for test false positive rate
+  void SetBloomFilter(int bits_per_key) {
+    delete policy_;
+    Reset();
+    policy_ = NewBloomFilterPolicy(bits_per_key);
+  }
 
   ~BloomTest() { delete policy_; }
 
@@ -37,7 +46,7 @@ class BloomTest : public testing::Test {
     }
     filter_.clear();
     policy_->CreateFilter(&key_slices[0], static_cast<int>(key_slices.size()),
-                          &filter_);
+                          &filter_, 0);
     keys_.clear();
     if (kVerbose >= 2) DumpFilter();
   }
@@ -59,7 +68,7 @@ class BloomTest : public testing::Test {
     if (!keys_.empty()) {
       Build();
     }
-    return policy_->KeyMayMatch(s, filter_);
+    return policy_->KeyMayMatch(s, filter_, 0);
   }
 
   double FalsePositiveRate() {
@@ -72,6 +81,8 @@ class BloomTest : public testing::Test {
     }
     return result / 10000.0;
   }
+
+  double FalsePositiveRateInTheory() { return policy_->FalsePositiveRate(); }
 
  private:
   const FilterPolicy* policy_;
@@ -147,6 +158,13 @@ TEST_F(BloomTest, VaryingLengths) {
                  mediocre_filters);
   }
   ASSERT_LE(mediocre_filters, good_filters / 5);
+}
+
+TEST_F(BloomTest, FalsePositiveRate) {
+  for (int i = 1; i < 1000; i++) {
+    SetBloomFilter(i);
+    ASSERT_EQ(FalsePositiveRateInTheory(), pow(0.6185, i));
+  }
 }
 
 // Different bits-per-byte

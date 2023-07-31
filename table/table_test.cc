@@ -4,23 +4,22 @@
 
 #include "leveldb/table.h"
 
+#include "db/memtable.h"
+#include "db/write_batch_internal.h"
 #include <map>
 #include <string>
 
-#include "gtest/gtest.h"
-#include "db/dbformat.h"
-#include "db/memtable.h"
-#include "db/write_batch_internal.h"
 #include "leveldb/db.h"
-#include "leveldb/env.h"
 #include "leveldb/iterator.h"
 #include "leveldb/options.h"
 #include "leveldb/table_builder.h"
+
 #include "table/block.h"
 #include "table/block_builder.h"
-#include "table/format.h"
-#include "util/random.h"
+#include "util/file_impl.h"
 #include "util/testutil.h"
+
+#include "gtest/gtest.h"
 
 namespace leveldb {
 
@@ -87,51 +86,6 @@ struct STLLessThan {
   }
 };
 }  // namespace
-
-class StringSink : public WritableFile {
- public:
-  ~StringSink() override = default;
-
-  const std::string& contents() const { return contents_; }
-
-  Status Close() override { return Status::OK(); }
-  Status Flush() override { return Status::OK(); }
-  Status Sync() override { return Status::OK(); }
-
-  Status Append(const Slice& data) override {
-    contents_.append(data.data(), data.size());
-    return Status::OK();
-  }
-
- private:
-  std::string contents_;
-};
-
-class StringSource : public RandomAccessFile {
- public:
-  StringSource(const Slice& contents)
-      : contents_(contents.data(), contents.size()) {}
-
-  ~StringSource() override = default;
-
-  uint64_t Size() const { return contents_.size(); }
-
-  Status Read(uint64_t offset, size_t n, Slice* result,
-              char* scratch) const override {
-    if (offset >= contents_.size()) {
-      return Status::InvalidArgument("invalid Read offset");
-    }
-    if (offset + n > contents_.size()) {
-      n = contents_.size() - offset;
-    }
-    std::memcpy(scratch, &contents_[offset], n);
-    *result = Slice(scratch, n);
-    return Status::OK();
-  }
-
- private:
-  std::string contents_;
-};
 
 typedef std::map<std::string, std::string, STLLessThan> KVMap;
 
@@ -231,7 +185,9 @@ class TableConstructor : public Constructor {
     source_ = new StringSource(sink.contents());
     Options table_options;
     table_options.comparator = options.comparator;
-    return Table::Open(table_options, source_, sink.contents().size(), &table_);
+    // no need to ReadMeta
+    return Table::Open(table_options, source_, sink.contents().size(), &table_,
+                       0); //ony one table in memory, file id is no means
   }
 
   Iterator* NewIterator() const override {

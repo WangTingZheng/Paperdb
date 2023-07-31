@@ -18,6 +18,7 @@
 #include "leveldb/export.h"
 #include "leveldb/options.h"
 #include "leveldb/status.h"
+#include <vector>
 
 namespace leveldb {
 
@@ -82,6 +83,8 @@ class LEVELDB_EXPORT TableBuilder {
  private:
   bool ok() const { return status().ok(); }
   void WriteBlock(BlockBuilder* block, BlockHandle* handle);
+  void WriteRawFilters(const std::vector<std::string>& filters, CompressionType type,
+                       BlockHandle* handle);
   void WriteRawBlock(const Slice& data, CompressionType, BlockHandle* handle);
 
   struct Rep;

@@ -6,6 +6,7 @@
 
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
+#include "util/mq_schedule.h"
 
 namespace leveldb {
 

@@ -22,12 +22,37 @@ if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif(NOT CMAKE_CXX_STANDARD)
 
+option(USE_SAN_ADD "Use sanitizers to check address issues" ON)
+option(USE_SAN_THE "Use sanitizers to check thread issues" OFF)
+option(USE_SAN_UB "Use sanitizers to check undefined behaviour" ON)
+
+option(USE_ADJUSTMENT_LOGGING "Use logging to record adjustment information" OFF)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug") # support DEBUG FLAG
+  add_definitions(-DDEBUG)
+endif ()
+
 if (WIN32)
   set(LEVELDB_PLATFORM_NAME LEVELDB_PLATFORM_WINDOWS)
   # TODO(cmumford): Make UNICODE configurable for Windows.
   add_definitions(-D_UNICODE -DUNICODE)
 else (WIN32)
+  if(USE_SAN_ADD AND USE_SAN_THE)
+    message(FATAL_ERROR "can not open address and thread san together")
+  endif ()
   set(LEVELDB_PLATFORM_NAME LEVELDB_PLATFORM_POSIX)
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(USE_SAN_ADD)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    endif ()
+
+    if(USE_SAN_THE)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -fPIE -g")
+    endif ()
+
+    if(USE_SAN_UB)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
+    endif()
+  endif ()
 endif (WIN32)
 
 option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
@@ -185,11 +210,17 @@ target_sources(leveldb
     "util/hash.h"
     "util/logging.cc"
     "util/logging.h"
+    "util/mq_schedule.cc"
+    "util/mq_schedule.h"
+    "util/multi_queue.cc"
     "util/mutexlock.h"
+    "util/condvar_signal.h"
     "util/no_destructor.h"
     "util/options.cc"
     "util/random.h"
     "util/status.cc"
+    "util/file_impl.cc"
+    "util/file_impl.h"
 
   # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
   $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -202,6 +233,7 @@ target_sources(leveldb
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/export.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/filter_policy.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/iterator.h"
+    "${LEVELDB_PUBLIC_INCLUDE_DIR}/multi_queue.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/options.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/slice.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/status.h"
@@ -317,8 +349,13 @@ if(LEVELDB_BUILD_TESTS)
       # "issues/issue178_test.cc"
       # "issues/issue200_test.cc"
       # "issues/issue320_test.cc"
+      # deadlock in this test:
+      # "issues/issue_deadlock_test.cc"
       "${PROJECT_BINARY_DIR}/${LEVELDB_PORT_CONFIG_DIR}/port_config.h"
       # "util/env_test.cc"
+      # will cause bug in other unit test use MQSchedule
+      # "util/condvar_signal_test.cc"
+      # "util/mq_schedule_test.cc"
       "util/status_test.cc"
       "util/no_destructor_test.cc"
       "util/testutil.cc"
@@ -344,6 +381,7 @@ if(LEVELDB_BUILD_TESTS)
         "util/arena_test.cc"
         "util/bloom_test.cc"
         "util/cache_test.cc"
+        "util/multi_queue_test.cc"
         "util/coding_test.cc"
         "util/crc32c_test.cc"
         "util/hash_test.cc"
@@ -486,6 +524,7 @@ if(LEVELDB_INSTALL)
       "${LEVELDB_PUBLIC_INCLUDE_DIR}/export.h"
       "${LEVELDB_PUBLIC_INCLUDE_DIR}/filter_policy.h"
       "${LEVELDB_PUBLIC_INCLUDE_DIR}/iterator.h"
+      "${LEVELDB_PUBLIC_INCLUDE_DIR}/multi_queue.h"
       "${LEVELDB_PUBLIC_INCLUDE_DIR}/options.h"
       "${LEVELDB_PUBLIC_INCLUDE_DIR}/slice.h"
       "${LEVELDB_PUBLIC_INCLUDE_DIR}/status.h"
