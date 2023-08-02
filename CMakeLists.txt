@@ -223,6 +223,7 @@ target_sources(leveldb
     "util/file_impl.h"
     "util/read_buffer.h"
     "util/read_buffer.cc"
+    "util/io_saver.cc"
 
   # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
   $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -242,6 +243,7 @@ target_sources(leveldb
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/table_builder.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/table.h"
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/write_batch.h"
+    "${LEVELDB_PUBLIC_INCLUDE_DIR}/io_saver.h"
 )
 
 if (WIN32)

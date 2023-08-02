@@ -61,6 +61,26 @@ TEST(ReadBufferTest, MultiAligned) {
   ASSERT_TRUE(read_buffer.PtrIsNotNull());
 }
 
+TEST(ReadBufferTest, MoveBuffer) {
+  char* ptr = AlignedMalloc();
+  ASSERT_NE(ptr, nullptr);
+  ReadBuffer read_buffer(ptr, /*aligned=*/true);
+
+  ReadBuffer new_constructor_buffer(std::move(read_buffer));
+  ASSERT_TRUE(new_constructor_buffer.PtrIsNotNull());
+
+  ReadBuffer new_equal_buffer = std::move(new_constructor_buffer);
+  ASSERT_TRUE(new_equal_buffer.PtrIsNotNull());
+
+}
+
+TEST(ReadBufferTest, SelfMove){
+  char* ptr = AlignedMalloc();
+
+  ReadBuffer self_assignment(ptr, /*aligned=*/true);
+  self_assignment = std::move(self_assignment);
+}
+
 TEST(ReadBufferTest, GetBeforeAlignedValue){
   size_t alignment = 1024;
 

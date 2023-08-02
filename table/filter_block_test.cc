@@ -69,7 +69,7 @@ class FilterBlockTest : public testing::Test {
 };
 
 TEST_F(FilterBlockTest, EmptyBuilder) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   FilterBlockBuilder builder(&policy_);
 
   Slice block = FinishBuilder(builder);
@@ -79,10 +79,10 @@ TEST_F(FilterBlockTest, EmptyBuilder) {
       "\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00"  // offset
       "\\x00\\x00\\x00\\x00"                      // size
       "\\x0" +
-          std::to_string(loaded_filters_number) +
+          std::to_string(kLoadFilterUnitsNumber) +
           "\\x00\\x00\\x00"  // loaded
           "\\x0" +
-          std::to_string(filters_number) +
+          std::to_string(kAllFilterUnitsNumber) +
           "\\x00\\x00\\x00"  // number
           "\\x0b",           // baselg
       EscapeString(block));
@@ -95,7 +95,7 @@ TEST_F(FilterBlockTest, EmptyBuilder) {
 }
 
 TEST_F(FilterBlockTest, SingleChunk) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   FilterBlockBuilder builder(&policy_);
   builder.StartBlock(100);
   builder.AddKey("foo");
@@ -118,10 +118,10 @@ TEST_F(FilterBlockTest, SingleChunk) {
       // bitmap size in disk, as same as bitmap len
       "\\x14\\x00\\x00\\x00"
       "\\x0" +
-          std::to_string(loaded_filters_number) +
+          std::to_string(kLoadFilterUnitsNumber) +
           "\\x00\\x00\\x00"
           "\\x0" +
-          std::to_string(filters_number) +
+          std::to_string(kAllFilterUnitsNumber) +
           "\\x00\\x00\\x00"
           "\\x0b",
       escapestring);
@@ -140,7 +140,7 @@ TEST_F(FilterBlockTest, SingleChunk) {
 }
 
 TEST_F(FilterBlockTest, MultiChunk) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   FilterBlockBuilder builder(&policy_);
 
   // First filter
@@ -191,7 +191,7 @@ TEST_F(FilterBlockTest, MultiChunk) {
 }
 
 TEST_F(FilterBlockTest, LoadAndExcit) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   FilterBlockBuilder builder(&policy_);
 
   // First filter
@@ -213,14 +213,14 @@ TEST_F(FilterBlockTest, LoadAndExcit) {
 
   FilterBlockReader* reader = GetReader(builder);
   // todo can automatically adapt to different parameters
-  for (int i = loaded_filters_number; i > 0; i--) {
+  for (int i = kLoadFilterUnitsNumber; i > 0; i--) {
     ASSERT_EQ(reader->FilterUnitsNumber(), i);
     ASSERT_TRUE(reader->EvictFilter().ok());
   }
 
   ASSERT_FALSE(reader->EvictFilter().ok());
 
-  for (int i = 0; i < filters_number; i++) {
+  for (int i = 0; i < kAllFilterUnitsNumber; i++) {
     ASSERT_EQ(reader->FilterUnitsNumber(), i);
     ASSERT_TRUE(reader->LoadFilter().ok());
   }
@@ -230,7 +230,7 @@ TEST_F(FilterBlockTest, LoadAndExcit) {
 }
 
 TEST_F(FilterBlockTest, Hotness) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   // to support internal key
   InternalFilterPolicy policy(&policy_);
   FilterBlockBuilder builder(&policy);
@@ -242,28 +242,30 @@ TEST_F(FilterBlockTest, Hotness) {
   AppendInternalKey(&add_result, add_key);
   builder.AddKey(add_result);
 
+  uint64_t access_time = 1000;
   FilterBlockReader* reader = GetReader(builder, &policy);
+  reader->SetAccessTime(access_time);
 
   // check
-  for (uint64_t sn = 1; sn < 30000; sn++) {
+  for (uint64_t sn = 1; sn < kLifeTime; sn++) {
     ParsedInternalKey check_key("foo", sn, kTypeValue);
     std::string check_result;
     AppendInternalKey(&check_result, check_key);
     // sequence number is sn
     ASSERT_TRUE(reader->KeyMayMatch(0, check_result));
     reader->UpdateState(sn);
-    ASSERT_EQ(reader->AccessTime(), sn);
+    ASSERT_EQ(reader->AccessTime(), sn + access_time);
 
     // reader died in sn + 30000
-    ASSERT_FALSE(reader->IsCold(30000 + sn - 1));
-    ASSERT_TRUE(reader->IsCold(30000 + sn));
+    ASSERT_FALSE(reader->IsCold(kLifeTime + sn - 1));
+    ASSERT_TRUE(reader->IsCold(kLifeTime + sn));
   }
 
   delete reader;
 }
 
 TEST_F(FilterBlockTest, Size) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   FilterBlockBuilder builder(&policy_);
   builder.StartBlock(100);
   builder.AddKey("foo");
@@ -307,7 +309,7 @@ TEST_F(FilterBlockTest, Size) {
 }
 
 TEST_F(FilterBlockTest, IOs) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   const FilterPolicy* policy = NewBloomFilterPolicy(10);
   FilterBlockBuilder builder(policy);
   builder.StartBlock(100);
@@ -332,16 +334,16 @@ TEST_F(FilterBlockTest, IOs) {
   ASSERT_EQ(reader->AccessTime(), access);
   // get ios by myself
   ASSERT_EQ(reader->IOs(),
-            pow(false_positive_rate, loaded_filters_number) * access);
+            pow(false_positive_rate, kLoadFilterUnitsNumber) * access);
 
-  if (loaded_filters_number < filters_number) {
+  if (kLoadFilterUnitsNumber < kAllFilterUnitsNumber) {
     ASSERT_EQ(reader->LoadIOs(),
-              pow(false_positive_rate, loaded_filters_number + 1) * access);
+              pow(false_positive_rate, kLoadFilterUnitsNumber + 1) * access);
   }
 
-  if (loaded_filters_number > 1) {
+  if (kLoadFilterUnitsNumber > 1) {
     ASSERT_EQ(reader->EvictIOs(),
-              pow(false_positive_rate, loaded_filters_number - 1) * access);
+              pow(false_positive_rate, kLoadFilterUnitsNumber - 1) * access);
   }
 
   delete policy;
@@ -349,7 +351,7 @@ TEST_F(FilterBlockTest, IOs) {
 }
 
 TEST_F(FilterBlockTest, GoBackToInitFilter) {
-  if (filters_number <= 0) return;
+  if (kAllFilterUnitsNumber <= 0) return;
   FilterBlockBuilder builder(&policy_);
 
   // First filter

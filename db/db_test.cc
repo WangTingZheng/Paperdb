@@ -74,7 +74,7 @@ class DBTest : public testing::Test {
   Options last_options_;
 
   DBTest() : env_(new SpecialEnv(Env::Default())), option_config_(kDefault) {
-    filter_policy_ = NewBloomFilterPolicy(10 / loaded_filters_number);
+    filter_policy_ = NewBloomFilterPolicy(10 / kLoadFilterUnitsNumber);
     dbname_ = testing::TempDir() + "db_test";
     DestroyDB(dbname_, Options());
     db_ = nullptr;
@@ -1770,7 +1770,7 @@ TEST_F(DBTest, BloomFilter) {
     options.block_cache = NewLRUCache(0);  // Prevent cache hits
     options.create_if_missing = true;
 
-    if (loaded_filters_number <= 0) {
+    if (kLoadFilterUnitsNumber <= 0) {
       return;
     }
 

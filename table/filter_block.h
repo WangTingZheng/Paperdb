@@ -30,9 +30,9 @@ namespace leveldb {
 class FilterPolicy;
 
 // Generate 4 filters and load 1 filter when FilterBlockReader is created
-static const size_t loaded_filters_number = 2;
-static const size_t filters_number        = 6;
-static const uint64_t life_time           = 30000;
+static const size_t kLoadFilterUnitsNumber = 2;
+static const size_t kAllFilterUnitsNumber  = 6;
+static const uint64_t kLifeTime            = 10000;
 
 // A FilterBlockBuilder is used to construct all of the filters for a
 // particular Table.  It generates a single string which is stored as
@@ -93,14 +93,18 @@ class FilterBlockReader {
     return filter_units.size();
   }
 
+  void SetAccessTime(uint64_t access_time){
+    // we only set access time after compaction, before Get()
+    assert(access_time_.load(std::memory_order_acquire) == 0);
+    access_time_.store(access_time, std::memory_order_release);
+  }
+
   uint64_t AccessTime() const {
-    MutexLock l(&mutex_);
-    return access_time_;
+    return access_time_.load(std::memory_order_acquire);
   }
 
   bool IsCold(SequenceNumber now_sequence) {
-    MutexLock l(&mutex_);
-    return now_sequence >= (sequence_ + life_time);
+    return now_sequence >= (sequence_.load(std::memory_order_acquire) + kLifeTime);
   }
 
   size_t OneUnitSize() const { return disk_size_; }
@@ -159,8 +163,8 @@ class FilterBlockReader {
   size_t num_;      // Number of entries in offset array
 
   mutable port::Mutex mutex_;
-  uint64_t access_time_ GUARDED_BY(mutex_);
-  SequenceNumber sequence_ GUARDED_BY(mutex_);
+  std::atomic<uint64_t> access_time_;
+  std::atomic<SequenceNumber> sequence_;
 
   RandomAccessFile* file_ GUARDED_BY(mutex_);
 

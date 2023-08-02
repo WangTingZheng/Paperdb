@@ -26,7 +26,6 @@
 #include "leveldb/table_builder.h"
 #include "table/block.h"
 #include "table/merger.h"
-#include "util/mq_schedule.h"
 
 namespace leveldb {
 
@@ -891,11 +890,27 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
       compact->compaction->num_input_files(1), compact->compaction->level() + 1,
       static_cast<long long>(compact->total_bytes));
 
+  MultiQueue* multi_queue = options_.multi_queue;
+
   // Add compaction outputs
   compact->compaction->AddInputDeletions(compact->compaction->edit());
   const int level = compact->compaction->level();
   for (size_t i = 0; i < compact->outputs.size(); i++) {
     const CompactionState::Output& out = compact->outputs[i];
+
+    // Get access time after compaction
+    // because some Tables only be read during compaction
+    // Get access time need all input table's access time
+    if(multi_queue) {
+      // TODO why user comparator?
+      uint64_t access_time = compact->compaction-> GetNewTableAccessTime(
+          out.smallest, out.largest, internal_comparator_.user_comparator());
+
+      // filter block already in mq
+      std::string table_id = Table::ParseHandleKey(options_, out.number);
+      multi_queue->SetAccessTime(table_id, access_time);
+    }
+
     compact->compaction->edit()->AddFile(level + 1, out.number, out.file_size,
                                          out.smallest, out.largest);
   }

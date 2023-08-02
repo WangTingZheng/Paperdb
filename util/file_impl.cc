@@ -3,10 +3,68 @@
 //
 
 #include "file_impl.h"
-
 #include "util/coding.h"
 
 namespace leveldb {
+const std::string& StringSink::contents() const {
+    return contents_;
+}
+
+Status StringSink::Close() {
+    return Status::OK();
+}
+
+Status StringSink::Flush() {
+    return Status::OK();
+}
+
+Status StringSink::Sync() {
+    return Status::OK();
+}
+
+Status StringSink::Append(const Slice& data) {
+    contents_.append(data.data(), data.size());
+    return Status::OK();
+}
+
+
+StringSource::StringSource(const Slice& contents)
+    :contents_(contents.data(), contents.size()){
+}
+
+uint64_t StringSource::Size() const {
+    return contents_.size();
+}
+
+Status StringSource::Read(uint64_t offset, size_t n, Slice* result, ReadBuffer* scratch) const {
+    if (offset >= contents_.size()) {
+      return Status::InvalidArgument("invalid Read offset");
+    }
+    if (offset + n > contents_.size()) {
+      n = contents_.size() - offset;
+    }
+    char *buf = (char *)malloc(sizeof (char )* n);
+    scratch->SetPtr(buf, /*aligned=*/false);
+    std::memcpy(buf, &contents_[offset], n);
+    *result = Slice(buf, n);
+    return Status::OK();
+}
+
+AtomicCounter::AtomicCounter() : count_(0) {}
+void AtomicCounter::Increment() { IncrementBy(1); }
+void AtomicCounter::IncrementBy(int count) LOCKS_EXCLUDED(mu_) {
+    MutexLock l(&mu_);
+    count_ += count;
+}
+int AtomicCounter::Read() LOCKS_EXCLUDED(mu_) {
+    MutexLock l(&mu_);
+    return count_;
+}
+void AtomicCounter::Reset() LOCKS_EXCLUDED(mu_) {
+    MutexLock l(&mu_);
+    count_ = 0;
+}
+
 FileImpl::FileImpl() : write_offset_(0) {
   sink_ = new StringSink();
   source_ = nullptr;

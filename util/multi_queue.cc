@@ -147,8 +147,8 @@ class InternalMultiQueue : public MultiQueue {
                                   logger_(nullptr),
                                   adjustment_time_(0),
                                   scheduler(MQScheduler::Default()){
-    queues_.resize(filters_number + 1);
-    for (int i = 0; i < filters_number + 1; i++) {
+    queues_.resize(kAllFilterUnitsNumber + 1);
+    for (int i = 0; i < kAllFilterUnitsNumber + 1; i++) {
       queues_[i] = new SingleQueue();
     }
   }
@@ -169,7 +169,7 @@ class InternalMultiQueue : public MultiQueue {
     }
     assert(real_usage == usage_);
 #endif
-    for (int i = 0; i < filters_number + 1; i++) {
+    for (int i = 0; i < kAllFilterUnitsNumber + 1; i++) {
       delete queues_[i];
       queues_[i] = nullptr;
     }
@@ -317,6 +317,17 @@ class InternalMultiQueue : public MultiQueue {
     logger_ = logger;
   }
 
+  void SetAccessTime(const std::string& key, uint64_t access_time) override{
+    MutexLock l(&mutex_);
+    auto iter = map_.find(key);
+    //we only set access time for new table generate after compaction
+    assert(iter != map_.end());
+    if (iter != map_.end()) {
+      QueueHandle* queue_handle = iter->second;
+      queue_handle->reader->SetAccessTime(access_time);
+    }
+  }
+
  private:
   size_t usage_ GUARDED_BY(mutex_);
   Logger* logger_ GUARDED_BY(mutex_);
@@ -336,7 +347,7 @@ class InternalMultiQueue : public MultiQueue {
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){
     SingleQueue* queue = nullptr;
     std::vector<QueueHandle*> filters;
-    for (int i = filters_number; i >= 1 && memory > 0; i--) {
+    for (int i = kAllFilterUnitsNumber; i >= 1 && memory > 0; i--) {
       queue = queues_[i];
       queue->FindColdFilter(memory, sn, filters);
     }
@@ -400,7 +411,7 @@ class InternalMultiQueue : public MultiQueue {
 
   Status LoadHandle(QueueHandle* handle) EXCLUSIVE_LOCKS_REQUIRED(mutex_){
     size_t number = handle->reader->FilterUnitsNumber();
-    if(number < filters_number) {
+    if(number < kAllFilterUnitsNumber) {
       queues_[number]->Remove(handle);
       queues_[number + 1]->Append(handle);
       return handle->reader->LoadFilter();
@@ -447,7 +458,7 @@ class InternalMultiQueue : public MultiQueue {
       EXCLUSIVE_LOCKS_REQUIRED(mutex_){
     if (hot_handle && hot_handle->reader->CanBeLoaded()) {
       size_t memory = hot_handle->reader->OneUnitSize();
-      std::vector<QueueHandle*> cold = FindColdFilter(memory, sn);
+      std::vector<QueueHandle*> cold = std::move(FindColdFilter(memory, sn));
       if(cold.empty()) return ;
       if (CanBeAdjusted(cold, hot_handle)) {
         ApplyAdjustment(cold, hot_handle);

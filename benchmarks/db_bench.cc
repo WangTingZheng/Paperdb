@@ -15,11 +15,11 @@
 #include "leveldb/filter_policy.h"
 #include "leveldb/multi_queue.h"
 #include "leveldb/write_batch.h"
+#include "leveldb/io_saver.h"
 
 #include "port/port.h"
 #include "util/crc32c.h"
 #include "util/histogram.h"
-#include "util/mutexlock.h"
 #include "util/random.h"
 #include "util/testutil.h"
 #include "util/file_impl.h"
@@ -297,15 +297,16 @@ class Stats {
   void AddMessage(Slice msg) { AppendWithSpace(&message_, msg); }
 
   void StartRecordingIO(){
-    SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
-    env->count_random_reads_.store(true, std::memory_order_release);
-    env->random_read_counter_.Reset();
+    IOSaver* io_saver = new IOSaver(leveldb::g_env);
+    io_saver->StartRead();
+    delete io_saver;
   }
 
   int FinishedRecordingIO(){
-    SpecialEnv* env = static_cast<SpecialEnv*>(leveldb::g_env);
-    int reads = env->random_read_counter_.Read();
-    return reads;
+    IOSaver* io_saver = new IOSaver(leveldb::g_env);
+    int read = io_saver->GetReadIONumber();
+    delete io_saver;
+    return read;
   }
 
   void FinishedSingleOp() {

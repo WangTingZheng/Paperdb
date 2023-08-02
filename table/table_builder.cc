@@ -26,7 +26,7 @@ struct TableBuilder::Rep {
         index_block(&index_block_options),
         num_entries(0),
         closed(false), // filter policy or filters number is invalid, do not use bf
-        filter_block(opt.filter_policy == nullptr || filters_number <= 0
+        filter_block(opt.filter_policy == nullptr || kAllFilterUnitsNumber <= 0
                          ? nullptr
                          : new FilterBlockBuilder(opt.filter_policy)),
         pending_index_entry(false) {

@@ -68,6 +68,8 @@ class LEVELDB_EXPORT MultiQueue {
   // set a logger to record adjustment information
   // in db/LOG
   virtual void SetLogger(Logger* logger) = 0;
+
+  virtual void SetAccessTime(const std::string& key, uint64_t access_time) = 0;
 };
 
 }  // namespace leveldb

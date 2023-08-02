@@ -24,16 +24,13 @@ class StringSink : public WritableFile {
  public:
   ~StringSink() override = default;
 
-  const std::string& contents() const { return contents_; }
+  const std::string& contents() const;
 
-  Status Close() override { return Status::OK(); }
-  Status Flush() override { return Status::OK(); }
-  Status Sync() override { return Status::OK(); }
+  Status Close() override;
+  Status Flush() override;
+  Status Sync() override;
 
-  Status Append(const Slice& data) override {
-    contents_.append(data.data(), data.size());
-    return Status::OK();
-  }
+  Status Append(const Slice& data) override;
 
  private:
   std::string contents_;
@@ -41,28 +38,11 @@ class StringSink : public WritableFile {
 
 class StringSource : public RandomAccessFile {
  public:
-  StringSource(const Slice& contents)
-      : contents_(contents.data(), contents.size()) {}
-
+  StringSource(const Slice& contents);
   ~StringSource() override = default;
-
-  uint64_t Size() const { return contents_.size(); }
-
+  uint64_t Size() const;
   Status Read(uint64_t offset, size_t n, Slice* result,
-              ReadBuffer* scratch) const override {
-    if (offset >= contents_.size()) {
-      return Status::InvalidArgument("invalid Read offset");
-    }
-    if (offset + n > contents_.size()) {
-      n = contents_.size() - offset;
-    }
-    char *buf = (char *)malloc(sizeof (char )* n);
-    scratch->SetPtr(buf, /*aligned=*/false);
-    std::memcpy(buf, &contents_[offset], n);
-    *result = Slice(buf, n);
-    return Status::OK();
-  }
-
+              ReadBuffer* scratch) const override;
  private:
   std::string contents_;
 };
@@ -70,11 +50,8 @@ class StringSource : public RandomAccessFile {
 class FileImpl {
  public:
   FileImpl();
-
   void WriteRawFilters(std::vector<std::string> filters, BlockHandle* handle);
-
   StringSource* GetSource();
-
   ~FileImpl();
 
  private:
@@ -83,23 +60,13 @@ class FileImpl {
   uint64_t write_offset_;
 };
 
-class AtomicCounter {
+class AtomicCounter{
  public:
-  AtomicCounter() : count_(0) {}
-  void Increment() { IncrementBy(1); }
-  void IncrementBy(int count) LOCKS_EXCLUDED(mu_) {
-    MutexLock l(&mu_);
-    count_ += count;
-  }
-  int Read() LOCKS_EXCLUDED(mu_) {
-    MutexLock l(&mu_);
-    return count_;
-  }
-  void Reset() LOCKS_EXCLUDED(mu_) {
-    MutexLock l(&mu_);
-    count_ = 0;
-  }
-
+  AtomicCounter();
+  void Increment();
+  void IncrementBy(int count);
+  int Read();
+  void Reset();
  private:
   port::Mutex mu_;
   int count_ GUARDED_BY(mu_);
