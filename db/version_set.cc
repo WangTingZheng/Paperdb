@@ -1625,6 +1625,7 @@ size_t Compaction::GetNewTableAccessTime(const InternalKey& smallest,
   size_t access_times = 0;
   size_t sum = 0;
   for(int which = 0; which < 2; which++){
+    // make sure that we get all table's access time
     assert(inputs_[which].size() == access_times_[which].size());
     for(int i = 0; i < inputs_[which].size(); i++){
       // TODO: use sort to speed up?

@@ -2,6 +2,21 @@
 
 ## Fine-grained Bloom Filter Allocation
 
+From the perspective of a Table, a point query needs to go through the following components in sequence: Table, Meta Index Block, FilterBlock, and Bloom Filter. Therefore, our implemention revolves around this path.
+
+```C++
+          /\
+         /  \
+        /  <-\-- Table
+       /------\
+      /        \
+     /     <----\---- MetaIndexBlock
+    /------------\
+   /       <------\--- FilterBlockReader
+  /----------------\
+ /         <--------\--- Bloom Filter
+/--------------------\
+```
 ### BloomFilter
 
 > related file:
@@ -122,6 +137,12 @@ Meta Index Block -> FilterBlock Contents
 Table adapts to two situations, one is that we use the default way of LevelDB to read filterblock, the other is to use multi_queue to manage filterblock, and the two switch to option.multi_queue is set.
 
 When the option of the multi_queue is nullptr, we will open the Table, directly from the disk to read data to create filterblockreader object, if not nullptr, indicating the need to filterblockreader by the multi_queue management, then we open the Table, from disk to create filterblockreader read data object is inserted into the multi_queue, while returning a handle containing the reader for query use.
+
+|  configuration        | if load filter  | where manage filter  | where manage filter |  
+|  ----                 | ----            |      ---             |  ---                |
+| not use bf            | ❌              |  ❌                  |  ❌                |  
+| use bf, no adjustment | 🆙              |  📃                  |  👁️‍🗨️                |  
+| use bf, has adjustment| 🆙              |  MQ                  |  👁️‍🗨️                |
 
 When the table is released due to program exit or TableCache replacement policy, the reader saved in the table will be freed, but the handle saved multi_queue only will be release which mean all filter units will be evicted but meta data(hotness etc) will be saved in multi queue.
 
@@ -256,3 +277,91 @@ We use a background thread created by MQSchedule in ``until/mq_schedule.cc`` to 
 **Note**: A cold reader with only one filter unit cannot be selected, and the false positive rate without a filter unit is not easy to calculate.
 
 **Note**: We add a lock into multi queue to support multi threads, LevelDB's benchmark is under multi threads.
+
+## Hotness Inheritance
+
+>related file:
+>- db/db_impl.cc
+>- util/multi_queue.cc
+
+The purpose of hotness inheritance is to allow LevelDB to inherit the hotness (access frequency) information from the input tables when generating new tables through Compaction, so that it does not need to accumulate from scratch. This enables the hotness of the table to better reflect its access situation.
+
+The main algorithm for hotness inheritance is as follows: Firstly, we need to obtain the range and hotness information of all input tables. When we generate a new table, we obtain its range and then search for overlapping tables in the input tables. These tables can be regarded as the data sources for the new table. We can add up the hotness of these tables and take an average, which becomes the hotness of the new table.
+To implement hotness inheritance, it mainly involves the following steps:
+
+1. **Collecting the hotness information** of each participating SSTable  during compaction.
+2. **Calculating the hotness information** of each output SSTable after compaction.
+3. **Updating the hotness information** into the Multi Queue.
+
+### Collecting the hotness information
+
+**Q: How to get hotness information of a Table？**
+
+In our design, we store the hotness in the FilterBlockReader of the Table. Therefore, to obtain the hotness of a Table, we only need to retrieve it from the FilterBlockReader stored in the Table. It is important to note that since both the main thread and Compaction need to access this hotness value, we define it as an atomic type to ensure thread safety.
+
+**Q: Hot to get a Table？**
+
+In the DoCompactionWork function, the MakeInputIterator function is called to create an iterator for each SSTable. During this process, we first read the Table object from disk or the Table Cache. At this point, we can obtain a Table object.
+
+**Q: Hot to get all table's hotness？**
+
+In MakeInputIterator, LevelDB creates an iterator for each Table and then merges them together to form a large iterator used for Compaction. During this process, the hotness information of each Table can be collected and stored in an array that corresponds one-to-one with the FileMetaData of the Table. This information is then ready to be used. You can obtain the hotness corresponding to a Table based on its level and order within the array.
+
+Due to the unordered nature of the first level, LevelDB uses two different approaches to create iterators. When a Table is in the first level, an iterator is created for each Table. In this case, we only need to retrieve and save the hotness information from each Table.
+
+For the non-first levels, which are all sorted, LevelDB creates a two-level iterator. The iterator is only created when Seek to a specific Table during Compaction. ,so, we pass a predefined GetFileIterator function to create the iterator when the Table is created. We can collect the heat information within this function.
+
+### Calculating the hotness information 
+
+**Q: When?**
+
+We need to calculate the hotness information after Compaction is completed. Due to the existence of two-level iterators, the process of obtaining the hotness information of the input Tables is done in real-time. This means that not all of the input Table's hotness are collected when constructing a new Table during Compaction. However, in order to implement heat inheritance, we must obtain the hotness information of all Tables.
+
+Therefore, we choose to calculate the hotness in the InstallCompactionResults function, which is executed after Compaction is finished. This function inserts the constructed Table's metadata into the Version.
+
+**Q: How?**
+
+As mentioned above, in InstallCompactionResults, when applying a Table, we will search for a portion of the input Tables that have overlapping ranges with the generated Table's key range. We then collect the hotness information of these overlapping Tables and calculate the average by adding them together.
+
+### Updating the hotness information
+
+**Q: When?**
+
+Once the hotness information of a Table is calculated, we immediately set and store it in the Multi Queue. According to our design, once a Table is read, its hotess information will be stored in the Multi Queue unless the DB is destroyed or the Table file is deleted. After constructing a Table, we will read it into the Table for testing if can be used, and at this point, the Multi Queue will have the hotness information stored.
+
+**Q: How？**
+
+We obtain the file number of a Table from its metadata, and then query its corresponding FilterBlockReader in the Multi Queue. We set the hotness information in the Reader.
+
+## DirectIO
+
+> related file:
+> - util/env_posix.cc
+> - util/env_windows.cc
+> - util/read_buffer.cc
+
+### Why DirectIO？
+
+The premise of ElasticBF is based on the assumption that reading the data block is the performance bottleneck for the entire Get request. However, LevelDB implements mmap and buffer IO, which means that small-sized read requests are often intercepted in memory and do not actually read from the disk. In cases where the workload is skewed, the buffer in buffer IO may handle most of the Get requests. Moreover, there is an overhead to adjust. As a result, the advantages of ElasticBF may not be fully realized in situations where LevelDB's mmap and buffer IO mechanisms are already handling the majority of small-sized read requests efficiently.
+
+DirectIO bypasses the operating system's cache and directly accesses the disk. By using DirectIO, reading blocks can become a performance bottleneck, allowing ElasticBF to truly come into effect. However, it is worth mentioning that DirectIO only bypasses the operating system's cache, while there may still be caches within the SSD itself that cannot be circumvented. Unfortunately, LevelDB does not implement DirectIO, so it would be necessary to implement it on my own.
+
+### How DirectIO design？
+
+In terms of implementation, there are two key differences between DirectIO and Buffer IO:
+
+1. Firstly, when opening a file, a flag **O_DIRECT** needs to be added. However, the handling may differ for macOS and Windows. You can refer to the RocksDB documentation on [DirectIO](https://github.com/facebook/rocksdb/wiki/Direct-IO) for more details.
+
+2. Secondly, DirectIO requires that the offset, read size, and memory block for storing data are all aligned. This is because DirectIO directly accesses the disk and reads according to the disk block size.
+
+In LevelDB, the caller of the Read interface is responsible for allocating memory. However, since DirectIO requires alignment, the memory allocated by the caller may not meet the requirements of DirectIO. In cases where compatibility with Buffer IO is necessary, the user doesn't know whether the underlying implementation is using DirectIO or Buffer IO. Therefore, the responsibility of memory allocation should not be placed on the caller. As a result, we choose to let the Read function handle the memory allocation.
+
+However, if the Read function is responsible for memory allocation, it could potentially lead to memory leaks. This is because only a portion of the allocated memory is returned to the user, and when the user releases the memory, they are only releasing a portion of what was allocated. Therefore, we must pass the memory address allocated by the Read function to the user so that they can release it properly.
+
+A straightforward approach is to use a two-level pointer. Since aligned memory allocated on Windows cannot be freed using the `free` function and requires a special `_aligned_free` function, it is possible that Buffer IO, which does not require aligned memory, may be used on the Windows platform. To distinguish between these two cases, we can wrap a flag around the address pointer to indicate whether the address is aligned or not. Based on this flag and the current operating system, we can choose the appropriate release function to free the resources. This wrapping is done in the ReadBuffer structure. Here are the different scenarios for selecting the release function:
+
+|           |  Posix(Linux, Macos) |  Windows   |
+|-----------|----------------------|-------------|
+|aligend    |  free                | aligned_free|
+|not aligend|  free                |  free    |
+
