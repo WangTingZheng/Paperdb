@@ -13,7 +13,7 @@
   * Background thread to load filter
 * DirectIO implementation in LevelDB
   * [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/61)]: Direct IO prototype
-  * [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/64)]: Direct IO speed tester
+  * [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/67)]: Direct IO speed tester
 * [[Github pr](https://github.com/WangTingZheng/Paperdb/pull/63)] Hotness inheritance
 
 > More details see in [doc/elasticbf.md](./doc/elasticbf.md), Chinese version see in [feishu](https://o444bvn7jh.feishu.cn/docx/XlBldwKc2oOTGMxPpLlckKLunvd), If you are interested in gaining a deeper understanding of the paper, please do not hesitate to contact me. I have added **``extensive annotations``** to the original paper, and I have recorded **``8 hours``** of lecture videos to elaborate on my interpretation of the paper.
