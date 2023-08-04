@@ -365,3 +365,4 @@ A straightforward approach is to use a two-level pointer. Since aligned memory a
 |aligend    |  free                | aligned_free|
 |not aligend|  free                |  free    |
 
+**Note:** I set 512 for alignment of Direct IO, if user pass true in ReadBuffer constructor, We will use page size to align. 

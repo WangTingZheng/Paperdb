@@ -102,9 +102,13 @@ class SingleQueue {
       if (e == nullptr || e == mru_ || e == lru_) {
         break;
       }
-      if (e->reader->IsCold(sn)) {
-        memory -= e->reader->OneUnitSize();
-        filters.emplace_back(e);
+      FilterBlockReader *reader = e->reader;
+      if (reader->IsCold(sn)) {
+        // skip if filter is loaded for NewIterator
+        if(reader->AccessTime() != 0) {
+          memory -= reader->OneUnitSize();
+          filters.emplace_back(e);
+        }
       } else {
         break ;
       }

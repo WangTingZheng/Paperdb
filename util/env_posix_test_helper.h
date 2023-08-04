@@ -13,6 +13,7 @@ class EnvPosixTest;
 class EnvPosixTestHelper {
  private:
   friend class EnvPosixTest;
+  friend class EnvPosixDirectIOTest;
 
   // Set the maximum number of read-only files that will be opened.
   // Must be called before creating an Env.

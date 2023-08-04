@@ -61,14 +61,6 @@ size_t GetPageSize() {
   return kAlignPageSize;
 }
 
-inline bool WindowsIsAligned(uint64_t val){
-  return IsAligned(val, GetPageSize());
-}
-
-inline bool WindowsIsAligned(const char* ptr){
-  return IsAligned(ptr, GetPageSize());
-}
-
 std::string GetWindowsErrorMessage(DWORD error_code) {
   std::string message;
   char* error_text = nullptr;
@@ -269,7 +261,8 @@ class WindowsDirectIORandomAccessFile : public RandomAccessFile {
     DWORD bytes_read = 0;
     OVERLAPPED overlapped = {0};
 
-    const DirectIOAlignData data = NewAlignedData(offset, n, GetPageSize());
+    uint64_t alignment = scratch->PageAligned() ? GetPageSize() : 512;
+    const DirectIOAlignData data = NewAlignedData(offset, n, alignment);
 
     overlapped.OffsetHigh = static_cast<DWORD>(data.offset >> 32);
     overlapped.Offset = static_cast<DWORD>(data.offset);

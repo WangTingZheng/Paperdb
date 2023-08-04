@@ -14,7 +14,7 @@ namespace leveldb {
 class ReadBuffer {
  public:
   // for Read caller
-  ReadBuffer();
+  explicit ReadBuffer(bool page_aligned = false);
 
   // for compression in ReadBlock
   ReadBuffer(char* ptr, bool aligned);
@@ -37,10 +37,13 @@ class ReadBuffer {
   // it should not be double cache in block cache
   bool PtrIsNotNull() const;
 
+  bool PageAligned() const;
+
  private:
   void FreePtr();
   char* ptr_;
   bool aligned_;
+  bool page_aligned_;
 };
 
 inline bool IsAligned(uint64_t val, size_t alignment){

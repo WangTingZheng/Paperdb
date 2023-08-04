@@ -149,7 +149,7 @@ FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
 }
 
 void FilterBlockReader::UpdateState(const SequenceNumber& sn) {
-  sequence_.store(sn, std::memory_order_release);
+  sequence_.store(sn, std::memory_order_relaxed);
   access_time_.fetch_add(1, std::memory_order_relaxed);
 }
 

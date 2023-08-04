@@ -26,6 +26,14 @@ TEST(ReadBufferTest, Empty) {
   ReadBuffer read_buffer;
 }
 
+TEST(ReadBufferTest, PageAligned) {
+  ReadBuffer read_buffer;
+  ASSERT_FALSE(read_buffer.PageAligned());
+
+  ReadBuffer page_aligned_buffer(/*page_aligned=*/true);
+  ASSERT_TRUE(page_aligned_buffer.PageAligned());
+}
+
 TEST(ReadBufferTest, Base) {
   char* ptr = (char*)malloc(sizeof(char) * 10);
   ReadBuffer read_buffer(ptr, /*aligned=*/false);

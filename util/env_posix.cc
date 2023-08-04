@@ -59,12 +59,11 @@ constexpr const int kOpenBaseFlags = O_CLOEXEC;
 constexpr const int kOpenBaseFlags = 0;
 #endif  // defined(HAVE_O_CLOEXEC)
 
-#if __linux__
+#ifdef __linux__
 constexpr const int kDirectIOFlags = O_DIRECT;
 #elif __APPLE__
 constexpr const int kDirectIOFlags = 0; // use fcntl, not open, macos has not O_DIRECT
 #endif //defined(OS_LINUX)
-
 
 constexpr const size_t kWritableFileBufferSize = 65536;
 
@@ -94,6 +93,17 @@ Status PosixError(const std::string& context, int error_number) {
   } else {
     return Status::IOError(context, std::strerror(error_number));
   }
+}
+
+Status EnableDirectIO(int fd, const std::string& filename){
+#ifdef __APPLE__ // open direct io in macos, O_DIRECT not be supported
+  // Just see RocksDB wiki https://github.com/facebook/rocksdb/wiki/Direct-IO
+  if(fcntl(fd, F_NOCACHE, 1) == -1){
+    close(fd);
+    return PosixError(filename, errno);
+  }
+#endif
+  return Status::OK();
 }
 
 // Helper class to limit resource usage to avoid exhaustion.
@@ -291,27 +301,27 @@ class PosixDirectIORandomAccessFile final : public RandomAccessFile {
   Status Read(uint64_t offset, size_t n, Slice* result,
               ReadBuffer* scratch) const override {
     int fd = fd_;
+    Status status;
     if (!has_permanent_fd_) {
       fd = ::open(filename_.c_str(), O_RDONLY | kDirectIOFlags | kOpenBaseFlags);
       if (fd < 0) {
         return PosixError(filename_, errno);
       }
 
-#if __linux__
-#elif __APPLE__ // open direct io in macos, O_DIRECT noy be supported
-      // Just see RocksDB wiki https://github.com/facebook/rocksdb/wiki/Direct-IO
-      fcntl(fd, F_NOCACHE, 1);
-#endif
+      status = EnableDirectIO(fd, filename_);
+      if(!status.ok()){
+        return status;
+      }
     }
 
     assert(fd != -1);
 
-    const DirectIOAlignData data = NewAlignedData(offset, n, GetPageSize());
+    uint64_t alignment = scratch->PageAligned()? GetPageSize() : 512;
+    const DirectIOAlignData data = NewAlignedData(offset, n, alignment);
 
     // data.ptr is aligned, new by posix_memalign in posix os
     // should be freed by free()
     scratch->SetPtr(data.ptr, /*aligned=*/true);
-    Status status;
     ssize_t read_size = ::pread(fd, data.ptr, data.size, static_cast<off_t>(data.offset));
 
     // return back user data
@@ -685,6 +695,11 @@ class PosixEnv : public Env {
     int fd = ::open(filename.c_str(), O_RDONLY | kDirectIOFlags | kOpenBaseFlags);
     if(fd < 0){
       return PosixError(filename, errno);
+    }
+
+    Status status = EnableDirectIO(fd, filename);
+    if(!status.ok()){
+      return status;
     }
 
     *result = new PosixDirectIORandomAccessFile(filename, fd, &fd_limiter_);

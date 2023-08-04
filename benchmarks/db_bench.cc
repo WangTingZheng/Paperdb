@@ -150,6 +150,7 @@ namespace leveldb {
 
 namespace {
 leveldb::Env* g_env = nullptr;
+IOSaver* io_saver = nullptr;
 
 class CountComparator : public Comparator {
  public:
@@ -297,15 +298,16 @@ class Stats {
   void AddMessage(Slice msg) { AppendWithSpace(&message_, msg); }
 
   void StartRecordingIO(){
-    IOSaver* io_saver = new IOSaver(leveldb::g_env);
-    io_saver->StartRead();
-    delete io_saver;
+    if(io_saver) {
+      io_saver->StartRead();
+    }
   }
 
   int FinishedRecordingIO(){
-    IOSaver* io_saver = new IOSaver(leveldb::g_env);
-    int read = io_saver->GetReadIONumber();
-    delete io_saver;
+    int read = -1;
+    if(io_saver) {
+      read = io_saver->GetReadIONumber();
+    }
     return read;
   }
 
@@ -583,6 +585,7 @@ class Benchmark {
     }
     delete cache_;
     delete filter_policy_;
+    delete io_saver;
   }
 
   void Run() {
@@ -934,9 +937,7 @@ class Benchmark {
     std::string value;
     int found = 0;
     KeyBuffer key;
-    if(FLAGS_save_ios) {
-      thread->stats.StartRecordingIO();
-    }
+    thread->stats.StartRecordingIO();
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
@@ -946,8 +947,8 @@ class Benchmark {
       thread->stats.FinishedSingleOp();
     }
     char msg[100];
-    if(FLAGS_save_ios) {
-      int reads = thread->stats.FinishedRecordingIO();
+    int reads = thread->stats.FinishedRecordingIO();
+    if(reads >= 0) {
       std::snprintf(msg, sizeof(msg), "(%d of %d found), cause %d io", found, num_, reads);
     }else {
       std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
@@ -984,11 +985,11 @@ class Benchmark {
       thread->stats.FinishedSingleOp();
     }
     char msg[100];
-    if(FLAGS_save_ios) {
-      int reads = thread->stats.FinishedRecordingIO();
+    int reads = thread->stats.FinishedRecordingIO();
+    if(reads >= 0) {
       std::snprintf(msg, sizeof(msg), "cause %d io", reads);
+      thread->stats.AddMessage(msg);
     }
-    thread->stats.AddMessage(msg);
   }
 
   void SeekRandom(ThreadState* thread) {
@@ -1196,7 +1197,11 @@ int main(int argc, char** argv) {
 
   leveldb::g_env = leveldb::Env::Default();
   if(FLAGS_save_ios){
-    leveldb::g_env = new leveldb::SpecialEnv(leveldb::g_env);
+    // delete when benchmark is destroyed
+    leveldb::io_saver = new leveldb::IOSaver(leveldb::g_env);
+
+    // pass in db to use
+    leveldb::g_env = leveldb::io_saver->GetEnv();
   }
 
   // Choose a location for the test database if none given with --db=<path>

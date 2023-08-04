@@ -185,7 +185,6 @@ void Table::ReadMeta() {
     return;
   }
 
-
   // Get filter block from cache, or read from disk and insert
   std::string filter_key = rep_->multi_cache_key;
   Slice key(filter_key.data(), filter_key.size());
