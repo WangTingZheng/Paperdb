@@ -28,6 +28,7 @@
 * **util/multi_queue.cc**: Manage filter units in memory to reduce adjust overhead **(98% lines unit test coverage)**
 * **util/condvar_signal.h** : A wrapper for signal all threads waiting for using filterblock reader by condvar using RAII, similar to unique_ptr
 * **util/read_buffer.h**: A RAII style class for manage allocated string in read function in RandomAccessFile
+* **uti/env_posix_direct_io_test.cc**: A micro benchmark for getting latency of buffer IO and direct IO
 
 # Performance
 

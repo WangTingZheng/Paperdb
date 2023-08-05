@@ -365,4 +365,12 @@ A straightforward approach is to use a two-level pointer. Since aligned memory a
 |aligend    |  free                | aligned_free|
 |not aligend|  free                |  free    |
 
-**Note:** I set 512 for alignment of Direct IO, if user pass true in ReadBuffer constructor, We will use page size to align. 
+**Note:** I set 512 for alignment of Direct IO, if user pass true in ReadBuffer constructor, We will use page size to align.
+
+### Performance
+
+I tested the latency diff between Buffer IO and Direct IO, we create a 4MB/400MB file and read a same 512Byte place 100 times, you can see buffer IO is fast than Direct IO so much, this because Buffer IO uses page cache to improve read performance: 
+
+<img src="../doc/io_performance.png" alt="buffer io vs direct io" width="500" height="300">
+
+If use want to get more information about IO, such as mmap, you can read this paper: **Are You Sure You Want to Use MMAP in Your Database Management System?**
