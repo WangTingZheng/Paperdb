@@ -95,16 +95,16 @@ class FilterBlockReader {
 
   void SetAccessTime(uint64_t access_time){
     // we only set access time after compaction, before Get()
-    assert(access_time_.load(std::memory_order_relaxed) == 0);
-    access_time_.store(access_time, std::memory_order_relaxed);
+    assert(access_time_.load(std::memory_order_acquire) == 0);
+    access_time_.store(access_time, std::memory_order_release);
   }
 
   uint64_t AccessTime() const {
-    return access_time_.load(std::memory_order_relaxed);
+    return access_time_.load(std::memory_order_acquire);
   }
 
   bool IsCold(SequenceNumber now_sequence) {
-    return now_sequence >= (sequence_.load(std::memory_order_relaxed) + kLifeTime);
+    return now_sequence >= (sequence_.load(std::memory_order_acquire) + kLifeTime);
   }
 
   size_t OneUnitSize() const { return disk_size_; }
