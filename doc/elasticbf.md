@@ -295,21 +295,7 @@ To implement hotness inheritance, it mainly involves the following steps:
 
 ### Collecting the hotness information
 
-**Q: How to get hotness information of a Table？**
-
-In our design, we store the hotness in the FilterBlockReader of the Table. Therefore, to obtain the hotness of a Table, we only need to retrieve it from the FilterBlockReader stored in the Table. It is important to note that since both the main thread and Compaction need to access this hotness value, we define it as an atomic type to ensure thread safety.
-
-**Q: Hot to get a Table？**
-
-In the DoCompactionWork function, the MakeInputIterator function is called to create an iterator for each SSTable. During this process, we first read the Table object from disk or the Table Cache. At this point, we can obtain a Table object.
-
-**Q: Hot to get all table's hotness？**
-
-In MakeInputIterator, LevelDB creates an iterator for each Table and then merges them together to form a large iterator used for Compaction. During this process, the hotness information of each Table can be collected and stored in an array that corresponds one-to-one with the FileMetaData of the Table. This information is then ready to be used. You can obtain the hotness corresponding to a Table based on its level and order within the array.
-
-Due to the unordered nature of the first level, LevelDB uses two different approaches to create iterators. When a Table is in the first level, an iterator is created for each Table. In this case, we only need to retrieve and save the hotness information from each Table.
-
-For the non-first levels, which are all sorted, LevelDB creates a two-level iterator. The iterator is only created when Seek to a specific Table during Compaction. ,so, we pass a predefined GetFileIterator function to create the iterator when the Table is created. We can collect the heat information within this function.
+After Compaction is completed, when calling InstallCompactionResults, we collect the hotness of the SSTables involved in the compaction. At this point, the SSTables involved in the compaction have been read into memory but have not been cleaned yet from the disk, so the hotness data of these FilterBlocks is available in the Multi Queue.
 
 ### Calculating the hotness information 
 

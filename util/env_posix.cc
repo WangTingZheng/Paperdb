@@ -250,7 +250,7 @@ class PosixRandomAccessFile final : public RandomAccessFile {
 
     Status status;
 
-    //creat array for read
+    //create array for read
     char * buf = (char*)malloc(sizeof(char) * n);
     scratch->SetPtr(buf, /*aligned=*/false);
 

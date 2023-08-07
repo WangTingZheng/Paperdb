@@ -12,7 +12,6 @@
 
 #include "table/block.h"
 #include "table/two_level_iterator.h"
-#include "util/mq_schedule.h"
 
 namespace leveldb {
 struct Table::Rep {
@@ -42,16 +41,21 @@ struct Table::Rep {
   std::string multi_cache_key;
 };
 
-std::string Table::ParseHandleKey(const Options& options,
+std::string Table::ParseHandleKey(const Options* options,
                                   uint64_t file_id) {
   std::string key;
-  assert(options.filter_policy);
+  assert(options && options->filter_policy);
   key = "filter.";
-  key.append(options.filter_policy->Name());
+  key.append(options->filter_policy->Name());
   char cache_key_buffer[8];
   EncodeFixed64(cache_key_buffer, file_id);
   key.append(cache_key_buffer, 8);
   return key;
+}
+
+std::string Table::ParseHandleKey(const Options& options,
+                                  uint64_t file_id) {
+  return ParseHandleKey(&options, file_id);
 }
 
 void Table::ParseHandleKey() {
@@ -283,20 +287,6 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
   return NewTwoLevelIterator(
       rep_->index_block->NewIterator(rep_->options.comparator),
       &Table::BlockReader, const_cast<Table*>(this), options);
-}
-
-
-uint64_t Table::GetAccessTime() {
-  MultiQueue* multi_queue = rep_->options.multi_queue;
-  MultiQueue::Handle*handle = rep_->handle;
-  assert(multi_queue != nullptr && handle != nullptr);
-
-  if(multi_queue != nullptr && handle != nullptr){
-    FilterBlockReader* reader = multi_queue->Value(rep_->handle);
-    return reader->AccessTime();
-  }
-
-  return 0;
 }
 
 bool Table::MultiQueueKeyMayMatch(uint64_t block_offset, const Slice& key) {

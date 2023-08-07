@@ -1206,6 +1206,8 @@ TEST_F(DBTest, Snapshot) {
 TEST_F(DBTest, HiddenValuesAreRemoved) {
   do {
     Random rnd(301);
+    Options options = CurrentOptions();
+    Reopen(&options);
     FillLevels("a", "z");
 
     std::string big = RandomString(&rnd, 50000);
@@ -1231,6 +1233,7 @@ TEST_F(DBTest, HiddenValuesAreRemoved) {
     ASSERT_EQ(AllEntriesFor("foo"), "[ tiny ]");
 
     ASSERT_TRUE(Between(Size("", "pastfoo"), 0, 1000));
+    Close();
   } while (ChangeOptions());
 }
 

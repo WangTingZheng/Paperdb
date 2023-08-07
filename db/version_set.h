@@ -362,6 +362,8 @@ class Compaction {
   // is successful.
   void ReleaseInputs();
 
+  void GetInputTableAccessTime(const Options& options);
+
   size_t GetNewTableAccessTime(const InternalKey& smallest,
                                const InternalKey& largest,
                                const Comparator* comparator);

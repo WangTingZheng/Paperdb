@@ -891,6 +891,9 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
       static_cast<long long>(compact->total_bytes));
 
   MultiQueue* multi_queue = options_.multi_queue;
+  if(multi_queue){
+    compact->compaction->GetInputTableAccessTime(options_);
+  }
 
   // Add compaction outputs
   compact->compaction->AddInputDeletions(compact->compaction->edit());

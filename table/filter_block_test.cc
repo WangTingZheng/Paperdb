@@ -373,22 +373,34 @@ TEST_F(FilterBlockTest, GoBackToInitFilter) {
 
   FilterBlockReader* reader = GetReader(builder);
 
-  ASSERT_TRUE(reader->GoBackToInitFilter(nullptr).ok());
+  ASSERT_TRUE(reader->GoBackToInitFilter(/*file=*/nullptr).ok());
   ASSERT_EQ(reader->FilterUnitsNumber(), reader->LoadFilterNumber());
 
   if (reader->CanBeEvict()) {
     ASSERT_TRUE(reader->EvictFilter().ok());
   }
 
-  ASSERT_TRUE(reader->GoBackToInitFilter(nullptr).ok());
+  ASSERT_TRUE(reader->GoBackToInitFilter(/*file=*/nullptr).ok());
   ASSERT_EQ(reader->FilterUnitsNumber(), reader->LoadFilterNumber());
 
   if (reader->CanBeLoaded()) {
     ASSERT_TRUE(reader->LoadFilter().ok());
   }
 
-  ASSERT_TRUE(reader->GoBackToInitFilter(nullptr).ok());
+  ASSERT_TRUE(reader->GoBackToInitFilter(/*file=*/nullptr).ok());
   ASSERT_EQ(reader->FilterUnitsNumber(), reader->LoadFilterNumber());
+
+  if (reader->CanBeLoaded()) {
+    ASSERT_TRUE(reader->LoadFilter().ok());
+  }
+
+  uint32_t filter_number = reader->FilterUnitsNumber();
+
+  ASSERT_TRUE(reader->CleanFilter().ok());
+  ASSERT_EQ(reader->FilterUnitsNumber(), 0);
+
+  ASSERT_TRUE(reader->GoBackToInitFilter(nullptr).ok());
+  ASSERT_EQ(reader->FilterUnitsNumber(), filter_number);
 
   delete reader;
 }

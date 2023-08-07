@@ -32,7 +32,9 @@
 
 # Performance
 
-Todo
+Adjustment apply 1040 times during Lookup, saved 8,279,190 IOs, improve throughput from 787.27op/sec to 968.716 op/sec, speed up 23% read performance:  
+
+<img src="/doc/performance.png" alt="performance" style="width: 35%; height: 35%;">
 
 ---
 # ToDo in ElasticBF
@@ -159,9 +161,10 @@ pass ``all`` to bash wll run fillrandom and readrandom together
 * 4 bits per key in one filter unit
 * 6 filter units for one SSTable
 * Load 2 filters at the beginning
-* 1KB KV
+* 128Byte KV
 * On release model
 * Snappy compression is not enabled
+* use zipfian, constant is 0.99
 
 # Google sanitizers
 

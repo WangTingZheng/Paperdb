@@ -117,6 +117,7 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
         free(ubuf);
         return Status::Corruption("corrupted snappy compressed block contents");
       }
+      //data will be freed when read_buffer object is gone
       result->data = Slice(ubuf, ulength);
       result->read_buffer =  new ReadBuffer(ubuf, /*aligned=*/false);
       break;

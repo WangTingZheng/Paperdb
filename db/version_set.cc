@@ -207,26 +207,6 @@ class Version::LevelFileNumIterator : public Iterator {
   mutable char value_buf_[16];
 };
 
-static Iterator* GetFileIteratorAndAccessTime(void* arg, const ReadOptions& options,
-                                 const Slice& file_value) {
-  AccessTimeGeter* getter = reinterpret_cast<AccessTimeGeter*>(arg);
-  TableCache* cache = getter->cache;
-  std::vector<uint64_t> *access_time_vector = getter->access_time_vector;
-
-  if (file_value.size() != 16) {
-    return NewErrorIterator(
-        Status::Corruption("FileReader invoked with unexpected value"));
-  } else {
-    Table* table = nullptr;
-    Iterator* iterator = cache->NewIterator(options, DecodeFixed64(file_value.data()),
-                                            DecodeFixed64(file_value.data() + 8), &table);
-    size_t access_time = table->GetAccessTime();
-    access_time_vector->push_back(access_time);
-
-    return iterator;
-  }
-}
-
 static Iterator* GetFileIterator(void* arg, const ReadOptions& options,
                                  const Slice& file_value) {
   TableCache* cache = reinterpret_cast<TableCache*>(arg);
@@ -1255,31 +1235,14 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c) {
       if (c->level() + which == 0) {
         const std::vector<FileMetaData*>& files = c->inputs_[which];
         for (size_t i = 0; i < files.size(); i++) {
-          Table* table = nullptr;
           list[num++] = table_cache_->NewIterator(options, files[i]->number,
-                                                  files[i]->file_size, &table);
-
-          // if we open mq, collect access time, ready to inheritance
-          if(multi_queue) {
-            c->access_times_[which].push_back(table->GetAccessTime());
-          }
+                                                  files[i]->file_size);
         }
       } else {
-        if(multi_queue) {
-          // living during compaction
-          AccessTimeGeter* getter = &(c->getters[which]);
-          getter->cache = table_cache_;
-          // collect access time for every table
-          getter->access_time_vector = &c->access_times_[which];
-          // Create concatenating iterator for the files from this level
-          list[num++] = NewTwoLevelIterator(
-              new Version::LevelFileNumIterator(icmp_, &c->inputs_[which]),
-              &GetFileIteratorAndAccessTime, getter, options);
-        }else{
-          list[num++] = NewTwoLevelIterator(
-              new Version::LevelFileNumIterator(icmp_, &c->inputs_[which]),
-              &GetFileIterator, table_cache_, options);
-        }
+        // Create concatenating iterator for the files from this level
+        list[num++] = NewTwoLevelIterator(
+            new Version::LevelFileNumIterator(icmp_, &c->inputs_[which]),
+            &GetFileIterator, table_cache_, options);
       }
     }
   }
@@ -1639,6 +1602,18 @@ size_t Compaction::GetNewTableAccessTime(const InternalKey& smallest,
   }
 
   return sum == 0 ? 0:(access_times / sum);
+}
+
+void Compaction::GetInputTableAccessTime(const Options& options) {
+  MultiQueue *multi_queue = options.multi_queue;
+  for(int which = 0; which < 2; which++){
+    for(int j = 0; j < inputs_[which].size(); j++){
+      std::string key = Table::ParseHandleKey(options, inputs_[which][j]->number);
+      uint64_t access_time = multi_queue->GetAccessTime(key);
+      access_times_[which].push_back(access_time);
+    }
+    assert(access_times_[which].size() == inputs_[which].size());
+  }
 }
 
 }  // namespace leveldb

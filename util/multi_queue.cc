@@ -287,12 +287,8 @@ class InternalMultiQueue : public MultiQueue {
     MutexLock l(&mutex_);
     if (handle != nullptr) {
       QueueHandle* queue_handle = reinterpret_cast<QueueHandle*>(handle);
-      Status s;
-      while(queue_handle->reader->CanBeEvict()) {
-        s = EvictHandle(queue_handle);
-        assert(s.ok());
-        usage_ -= queue_handle->reader->OneUnitSize();
-      }
+      usage_ -= queue_handle->reader->Size();
+      queue_handle->reader->CleanFilter();
     }
   }
 
@@ -330,6 +326,19 @@ class InternalMultiQueue : public MultiQueue {
       QueueHandle* queue_handle = iter->second;
       queue_handle->reader->SetAccessTime(access_time);
     }
+  }
+
+  uint64_t GetAccessTime(const std::string& key) override{
+    MutexLock l(&mutex_);
+    auto iter = map_.find(key);
+    //we only set access time for new table generate after compaction
+    assert(iter != map_.end());
+    if (iter != map_.end()) {
+      QueueHandle* queue_handle = iter->second;
+      return queue_handle->reader->AccessTime();
+    }
+
+    return 0;
   }
 
  private:
@@ -389,7 +398,7 @@ class InternalMultiQueue : public MultiQueue {
 
     if (adjusted_ios < original_ios) {
       adjustment_time_.fetch_add(1);
-#ifdef USE_ADJUSTMENT_LOGGING
+#if USE_ADJUSTMENT_LOGGING
       LoggingAdjustmentInformation(colds.size(), hot->reader->FilterUnitsNumber(),
                                    hot->reader->AccessTime(),
                                    adjusted_ios, original_ios);
@@ -439,7 +448,7 @@ class InternalMultiQueue : public MultiQueue {
     for (QueueHandle* cold : colds) {
       s = EvictHandle(cold);
       if(!s.ok()){
-#ifdef USE_ADJUSTMENT_LOGGING
+#if USE_ADJUSTMENT_LOGGING
         Log(logger_, "Adjustment: Evict colds handles failed, message is %s",
             s.ToString().c_str());
 #endif
@@ -450,7 +459,7 @@ class InternalMultiQueue : public MultiQueue {
 
     s = LoadHandle(hot);
     if(!s.ok()){
-#ifdef USE_ADJUSTMENT_LOGGING
+#if USE_ADJUSTMENT_LOGGING
       Log(logger_, "Adjustment: Load hot handle failed, message is %s",
           s.ToString().c_str());
 #endif
